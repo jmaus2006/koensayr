@@ -10,8 +10,8 @@ Current shipped patches by binary:
 
 | Binary | Patches |
 |---|---|
-| `mtkbt` | V1 (AVRCP 1.0→1.3 SDP byte on legacy served record), V2 (AVCTP 1.0→1.2 SDP byte), V3 (A2DP 1.0→1.3 SDP byte), V4 (AVDTP 1.0→1.3 SDP byte), V5 (AVDTP sig 0x0c TBH-table alias to sig 0x02 handler — best-effort workaround for GAVDP 1.3 ICS Acceptor row 9), V6 (internal `activeVersion` 10→14 — routes the SDP record builder to the AVRCP 1.3 served record so the wire-served record matches the F1-surfaced version), V7 (drop AVRCP 1.4 attr 0x000d Browse PSM advertisement on the AVRCP 1.3 record — swap entry slot to 0x0100 ServiceName), V8 (clear stock GroupNavigation bit 5 from SupportedFeatures byte stream so mask = 0x0001), S1 (0x0311 SupportedFeatures → 0x0100 ServiceName attr-table swap on legacy record), P1 (force VENDOR_DEPENDENT through PASSTHROUGH-emit so the JNI sees the frame), M1 / M1b / M1c (three sites in fn 0x379e0 flipped 0x0D→0x0F so trampoline-emitted RegNotif responses get AV/C ctype INTERIM on the wire instead of CHANGED — see Trace #34), M2 (NOP `beq 0x6d0e0` at `0x6d06e` — bypass the outbound-frame builder's list-contains drop gate), M3 (NOP `strb.w r0, [r4, #0xf2]` at `0x6df42` — disable the chip-busy flag SET so the gate at `0x6df3a` never trips; both M2 and M3 derived in Trace #40 to eliminate the silent ~80% drop of T9 CHANGED emits under A2DP saturation) |
-| `libextavrcp_jni.so` | R1 (msg=519 redirect into trampoline-chain entry) + T1 / T2-stub / extended_T2 / T4 / T5 / T_charset / T_battery / T_continuation / T6 / T8 / T9 trampolines hosted in LOAD #1 page-padding extension; U1 (NOP `UI_SET_EVBIT(EV_REP)` to defang kernel auto-repeat on the AVRCP virtual keyboard). T1 advertises `{0x01, 0x02, 0x05, 0x08, 0x09, 0x0a, 0x0b, 0x0c}` — events 0x09-0x0c are 1.4+ event IDs INTERIM-acked with zero payload via existing `libextavrcp.so` builders (no CHANGED ever fires; Y1 has one player, no Now Playing folder, no UID database). Mirrors Pixel-as-TG; what unblocks strict CT metadata-pane render (see Trace #32). |
+| `mtkbt` | V1 (AVRCP 1.0→1.3 SDP byte on legacy served record), V2 (AVCTP 1.0→1.2 SDP byte), V3 (A2DP 1.0→1.3 SDP byte), V4 (AVDTP 1.0→1.3 SDP byte), V5 (AVDTP sig 0x0c TBH-table alias to sig 0x02 handler — best-effort workaround for GAVDP 1.3 ICS Acceptor row 9), V6 (internal `activeVersion` 10→14 — routes the SDP record builder to the AVRCP 1.3 served record so the wire-served record matches the F1-surfaced version), V7 (drop AVRCP 1.4 attr 0x000d Browse PSM advertisement on the AVRCP 1.3 record — swap entry slot to 0x0100 ServiceName), V8 (clear stock GroupNavigation bit 5 from SupportedFeatures byte stream so mask = 0x0001), S1 (0x0311 SupportedFeatures → 0x0100 ServiceName attr-table swap on legacy record), P1 (force VENDOR_DEPENDENT through PASSTHROUGH-emit so the JNI sees the frame), M1 (widen the RegNotif INTERIM/CHANGED dispatcher cmp at `fcn.0x121d8:0x12230` from `cmp r1, 1` to `cmp r1, 0xF` so wire ctype matches the JNI's reasonCode arg — see Trace #37), M6 (NOP the hardcoded `movs r1, 0xD` at `fcn.0x121d8:0x12244` so the CHANGED branch becomes a pure pass-through for any non-INTERIM AV/C ctype value the JNI sets in `ipc[8]` — companion to M1; static-verified end-to-end in Trace #60), M2 (NOP `beq 0x6d0e0` at `0x6d06e` — bypass the outbound-frame builder's list-contains drop gate on Path A, the fragmented multi-frame path for `msg=540` GetElementAttributes), M3 (NOP `strb.w r0, [r4, #0xf2]` at `0x6df42` — disable the chip-busy flag SET on Path A so the gate at `0x6df3a` never trips; both M2 and M3 derived in Trace #40 to eliminate the silent ~80% drop of T9 CHANGED emits under A2DP saturation), M4 (NOP `beq 0x6d19c` at `0x6d116` — bypass the structurally-identical list-contains drop gate on Path B `fcn.0x6d0f0`, the short single-PDU path for `msg=544` RegNotif INTERIM/CHANGED that the dispatcher at `fcn.0xf0bc` selects via `cbz r3, 0xf186` when packetFrame[9]==0 (i.e. ctype>6, response direction); see Trace #41 — addresses the subscription-class CT retry-storm where `msg=544` was delivering at ~6% on the wire while `msg=540` on Path A was at ~100%) |
+| `libextavrcp_jni.so` | R1 (msg=519 redirect into trampoline-chain entry) + T1 / T2-stub / extended_T2 / T4 / T5 / T_charset / T_battery / T_continuation / T6 / T8 / T9 trampolines hosted in LOAD #1 page-padding extension; U1 (NOP `UI_SET_EVBIT(EV_REP)` to defang kernel auto-repeat on the AVRCP virtual keyboard). T1 advertises `{0x01, 0x02, 0x05, 0x08, 0x09, 0x0a, 0x0b, 0x0c}` (mirrors Pixel-as-TG's GetCapabilities event list); T8 INTERIM-acks events 0x01-0x08 and rejects events 0x09-0x0c with AV/C ctype `0x08` NOT_IMPLEMENTED via M6's pass-through path on mtkbt. The CapabilityID 0x03 advertisement is decoupled from per-event RegisterNotification response per AV/C §6.7.1; CTs that subscribe to an advertised-but-unsupported event correctly handle NOT_IMPLEMENTED by dropping the event from their retry set. |
 | `MtkBt.odex` | F1 (`getPreferVersion()`=14 unblocks 1.3+ Java dispatch), F2 (`disable()` resets `sPlayServiceInterface`), 2 cardinality NOPs (TRACK_CHANGED + PLAYBACK_STATUS_CHANGED switch arms in `BTAvrcpMusicAdapter.handleKeyMessage`) |
 | `com.innioasis.y1*.apk` | A / B / C (Artist→Album navigation), E (discrete PASSTHROUGH PLAY/PAUSE/STOP/NEXT/PREV per AV/C Panel Subunit Spec), H / H′ / H″ (foreground-activity propagation of unhandled discrete media keys + framework-synthetic-repeat filter) |
 | `libaudio.a2dp.default.so` | AH1 (skip `a2dp_stop` in `standby_l` so AudioFlinger silence-timeout leaves the AVDTP source stream alive across pauses) |
@@ -3674,3 +3674,3798 @@ question (which combination is best?) requires CT-side observation.
 
 Trace #40 closed: the Kia stuck-button regression resolved by the combined work even though the exact causal mechanism remains under-determined (likely a mix of TrackInfoWriter fast-path improvements + strict-gate hygiene + the position-fix work). Future Kia-specific debugging should focus on T6 freshness (file[792] / file[780-787] / file[776-779]) since that's the wire path Kia actually uses.
 
+
+## Trace #41 (2026-05-16) — Subscription-class CT metadata-pane regression: twin outbound-frame builder Path B is unpatched; M4 fix
+
+**Symptom.** A subscription-class CT (Chevrolet Bolt EV — see `dual-bolt-20260516-1453` for the load-bearing capture) displayed metadata for only 3 of 32 tracks played across a ~2.5 min driver-seat session. Y1 music app behaved correctly (track changes, play/pause, all logged). The 3 displayed tracks were not adjacent in playback order, not at session boundaries, and the metadata-success/failure cadence didn't correlate with screen wake events (user explicitly verified by waking the screen mid-session on failed tracks). PASSTHROUGH worked on every press. Title / Artist / Album / Genre / track-number / duration all appeared when they appeared.
+
+**Hypotheses ruled out.**
+
+- *Screen-off / Y1Bridge cascade.* Refuted by user waking the Y1 screen on a non-displaying track and seeing no metadata update.
+- *AVRCP 1.3 attribute corruption.* The 3 displayed tracks contained varied attribute lengths, characters, and zero-pad alignment; nothing distinguished them structurally from non-displayed tracks.
+- *Path-A (M2/M3) regression.* `msg=540` GetElementAttributes IPC emits → wire TX frames mapped 3:3 — every `msg=540` reached the wire. The 3 displayed tracks were each emitted via `msg=540` opportunistically (not via subscription).
+- *MtkBt.odex cardinality gates*. Already NOP'd; `MMI_AVRCP` logged 1,542 `ACTION_REG_NOTIFY ... cardinality:0` lines confirming the JNI was firing the natives but the Java callback table was empty (downstream of the root cause, not the root cause itself).
+- *Stale btlog sampling artifact (Trace #40 closure pattern).* Refuted by direct correlation between IPC emit count and `MMI_AVRCP cardinality:0` log volume — the missing wire frames are real, not a sampling artifact, because subscription confirmation never happens.
+
+**Wire-level evidence.** In the same `dual-bolt-20260516-1453` capture:
+
+| IPC msg | Path | Logcat emits | Wire TX frames | Delivery rate |
+|---|---|---|---|---|
+| `msg=540` GetElementAttributes (STABLE 0x0C) | Path A (M2/M3-patched) | 3 | 3 | 100% |
+| `msg=544` RegNotif response (INTERIM 0x0F / CHANGED 0x0D) | Path B (unpatched) | 117 | ~7 | ~6% |
+
+**Static dispatch trace.** `fcn.0xf0bc` (outbound AVRCP frame dispatcher) splits at `ldrb r3, [r6, #9]; cbz r3, 0xf186`:
+
+- `r3 != 0` (`byte[9] != 0`) → Path A: `fcn.0xed50 → fcn.0x6d048 → fcn.0x6df20 → fcn.0xae5e4 L2CAP_SendData`. This is the fragmented multi-frame send path; M2 NOPs `fcn.0x6d048`'s list-contains drop gate at `0x6d06e`, M3 NOPs the chip-busy SET in `fcn.0x6df20` at `0x6df42`. Carries `msg=540`-class responses.
+- `r3 == 0` (`byte[9] == 0`) → Path B: `fcn.0xef08 → fcn.0x6d0f0 → b.w 0xae5e4 L2CAP_SendData` (tail-call direct, no `fcn.0x6df20` intermediate). This is the short single-PDU send path. Carries `msg=544`-class responses. Unpatched before this trace.
+
+Empirical confirmation that the JNI marshaller writes `byte[9]=0` for `msg=544` and non-zero for `msg=540`: log analysis of the `dual-bolt-20260516-1453` capture shows perfect path separation by IPC `msg` field — every `msg=544` IPC emission is followed by a Path-B selection in mtkbt, every `msg=540` IPC emission is followed by a Path-A selection.
+
+**Structural identity of the two builders.** `fcn.0x6d0f0` is byte-for-byte structurally identical to M2's `fcn.0x6d048`:
+
+| offset (Path A / `fcn.0x6d048`) | offset (Path B / `fcn.0x6d0f0`) | role |
+|---|---|---|
+| `0x6d068` `bl 0x6ccdc` | `0x6d110` `bl 0x6ccdc` | list-contains check against `g_active_conn_list` |
+| `0x6d06e` `beq 0x6d0e0` | `0x6d116` `beq 0x6d19c` | drop gate (returns `rc=0xd`) |
+| `0x6d076` `cmp r6, #0x0F` | `0x6d11e` `cmp r6, #0x0F` | INTERIM/CHANGED discriminator |
+| `0x6d0e0` `movs r0, 0xd; pop` | `0x6d19c` `movs r0, 0xd; pop` | drop epilogue |
+
+**Fix — M4.** NOP `beq 0x6d19c` at `0x6d116` (2 bytes, `41 d0` → `00 bf`). After M4, `fcn.0x6d0f0` unconditionally builds the wire frame and tail-calls `b.w 0xae5e4`. No M3-analogue is needed on Path B because `fcn.0x6d0f0` skips `fcn.0x6df20` entirely (the chip-busy SET only exists in `fcn.0x6df20`).
+
+**Safety.** Same reasoning as M2 — the list-contains state was a chip-readiness heuristic, not a correctness check. mtkbt's IPC dispatcher is single-threaded, `fcn.0xae5e4`'s downstream chain (`fcn.0xae418 → fcn.0x50918 → mtk_bt_write`) is synchronous blocking UART write, no concurrent emits race on per-channel state.
+
+**Why subscription-class CTs disengage.** AVCTP V13 §3.3.5 specifies a 3 s response timeout per outstanding transaction. A subscription-class CT (e.g. Bolt) sends RegisterNotification COMMANDs for ev=01 PLAYBACK_STATUS_CHANGED, ev=05 PLAYBACK_POS_CHANGED, ev=08 PLAY_TRACK_REACHED_END, ev=0A NOW_PLAYING_CONTENT_CHANGED on initial AVRCP TG engagement. Without INTERIM responses landing within the 3 s window, the CT retries each subscription. After several retries (CT-implementation-specific, observed 7-14 in the Bolt capture) the CT disengages AVRCP TG and gives up on subscription-based updates entirely. From that point on, only opportunistic `msg=540` GetElementAttributes responses driven by track changes reach the CT — explaining the "3 of 32 tracks displayed" pattern (whichever 3 tracks triggered a `msg=540` emit in the narrow window before the CT disengaged).
+
+**Why polling-class CTs were unaffected pre-M4.** A polling-class CT (e.g. Kia) does not depend on RegNotif subscriptions at all — it polls `GetPlayStatus` + `GetElementAttributes` (both `msg=540`-class) at its own cadence. Path A was patched; Path B drops were invisible to polling CTs. This is why Trace #40 closure observed Kia working fine on the same firmware that left Bolt broken — they exercise different builders.
+
+**Why this wasn't caught in Trace #40.** Trace #40 derived M2/M3 from observed wire-side drops on `msg=540` Path A under a different CT class. The `msg=544` Path B path was never explicitly profiled in #40 because the captures used for #40 were polling-class CTs (Kia) and a subscription-class CT (Sonos) on a build where `msg=544` delivery was confounded by the cardinality-0 gate (which was a separate bug fixed elsewhere). With `msg=544` actually reaching the IPC layer in current builds, the Path B drop became observable.
+
+**Confidence.** High on byte-level mechanism (the `fcn.0xf0bc` dispatch + the structural identity of the two builders is direct static analysis, independent of any wire-side measurement). High on Bolt as primary affected CT (load-bearing capture). Medium on whether other subscription-class issues (notably the Sonos Album metadata regression observed in `dual-sonos-postflash`) are also resolved by M4 — Sonos's `msg=544` delivery rate is higher in the current captures (~25-37% vs Bolt's ~6%), so Sonos may have a separate root cause. Recommend treating Sonos Album as a follow-up after M4 hardware validation.
+
+**Status:** Patch staged in `src/patches/patch_mtkbt.py`. New `OUTPUT_MD5 = a10ca9636417a0ed71495dfa11b5eff0`. Pending hardware validation on a subscription-class CT.
+
+## Trace #42 (2026-05-16) — Static audit for additional silent-drop gates in mtkbt outbound paths
+
+**Goal.** After M4 landed (Trace #41), do a static-only sweep of every outbound-frame builder, dispatcher, and L2CAP send wrapper in `mtkbt` to find any other gates with the M2/M3/M4 signature: a conditional that returns an error code, doesn't log surface-visibly, and the caller treats the return as drop-and-forget rather than retry-or-error. Stock binary `mtkbt` MD5 `3af1d4ad8f955038186696950430ffda` (extracted via `debugfs` from `/work/koensayr/staging/v3.0.7_sysimg/system-raw.img`).
+
+**Method.** Disassemble (`radare2`) every function in the outbound chain: dispatchers (`fcn.0xf0bc`, `fcn.0xf290`), high-level emitters (`fcn.0x1165c`, `fcn.0x11778`, `fcn.0x11894`, `fcn.0x119fc`), frame builders (`fcn.0xed50`, `fcn.0xef08`), frame finalizers (`fcn.0x6d048`, `fcn.0x6d0f0`, `fcn.0x6d1a8`), AVCTP/L2CAP wrappers (`fcn.0x6df20`, `fcn.0xae5e4`, `fcn.0xae418`, `fcn.0xae6ac`), and RX-side dispatchers (`fcn.0x6cee4`, `fcn.0x6cf30`, `fcn.0x6cf8c`). Byte-search for the M-series gate signatures: the `bl fcn.0x6ccdc + cmp r0, 0 + beq <drop>` list-contains pattern, `movs r0, 0xd; pop` drop epilogues, and `strb.w r0, [r4, 0xf2]` chip-busy SET.
+
+**Three-tier dispatcher discovered.** mtkbt's outbound side has TWO dispatchers (not one), selected by `msg[8]`:
+
+| `msg[8]` | Dispatcher | Emitters that build this | Builder | M-coverage |
+|---|---|---|---|---|
+| 0, 1, 3 | `fcn.0xf0bc` | `fcn.0x1165c` (14-byte short), `fcn.0x11894` (up-to-512 long) | `fcn.0x6d048` (Path A, `msg[9]!=0`) or `fcn.0x6d0f0` (Path B, `msg[9]==0`) | M2/M3 (A), M4 (B) |
+| 2 | `fcn.0xf290` | `fcn.0x11778` (`T_HandleErrorResponse`), `fcn.0x119fc` (up-to-512 long) | `fcn.0x6d1a8` (Path C) | **unpatched** |
+
+`fcn.0x119fc` has 11 caller sites (per-PDU success-path emitters) and `fcn.0x11778` is the project-wide error-response emitter — both route through Path C.
+
+**New gate inventory.** Across the audited functions, every conditional-drop site that fits the M-series pattern:
+
+| Tier | Site | Function | Mnemonic | Drop rc | Condition | M-series analogue |
+|---|---|---|---|---|---|---|
+| 2 | `0x6d1ce` | `fcn.0x6d1a8` (Path C — browse) | `beq 0x6d242` | `r0=0xd` | `fcn.0x6ccdc(conn-list)` returns 0 | structural twin of M2 / M4, on browse path Y1 doesn't emit on |
+| 2 | `0x6d1ec` | `fcn.0x6d1a8` (Path C — browse) | `strb.w r3, [r4, 0xf2]` (r3=1) | (sets chip-busy on browse chan) | `msg[1] == 1` | structural twin of M3 SET, on browse path |
+| - | `0xf2c4` | `fcn.0xf290` (browse dispatcher) | `bne 0xf384` | (queue, `r5=2`) | `chan[0x558] != 0` (browse txPending) | NOT A DROP — branch target is queue-on-`txBrowsePacketList`, structurally analogous to `fcn.0xf0bc`'s `0xf210` queue path |
+| 2 | `0x6d12c` | `fcn.0x6d0f0` (Path B) | `bne 0x6d19e` | `r0=1` | `msg[0] == 0x0F` AND `msg[3] != 0` | none — defensive |
+| 2 | `0xf2dc` | `fcn.0xf290` | `ble 0xf370` → `r5=0x12` | `r5=0x12` | `fcn.0x6d324(chan)+3 ≤ msg.len` (computed MTU shorter than payload+AVCTP header) | none — bounded by spec |
+| 3 | `0xf13e` | `fcn.0xf0bc` (Path A length gate) | `beq 0xf154` (drop fall-through, `r5=1`) | `r5=1` | Path A (`msg[9]!=0`) AND `msg.len` vs `fcn.0xed16` mismatch | empirically not load-bearing (msg=540 100% delivery confirmed in Trace #41) |
+| 4 | `0x6cf04`, `0x6cf58`, `0x6cfb2` | `fcn.0x6cee4`, `fcn.0x6cf30`, `fcn.0x6cf8c` (RX-side) | `beq <drop>` | `r0=0xd` | `fcn.0x6ccdc(conn-list)` returns 0 | **RX-side analogue of M2 / M4** |
+
+**Structural-identity verification of Tier-1 Path C gate.** Bytes immediately preceding the `beq <drop>`:
+
+| site | preceding bytes (PC-relative addr load, list-contains call, cmp) | drop byte |
+|---|---|---|
+| `0x6d06e` (M2 / Path A) | `21 46 78 44 00 68 ff f7 38 fe 00 28` | `37 d0` |
+| `0x6d116` (M4 / Path B) | `21 46 78 44 00 68 ff f7 e4 fd 00 28` | `41 d0` |
+| `0x6d1ce` (Path C) | `21 46 78 44 00 68 ff f7 88 fd 00 28` | `38 d0` |
+
+Identical instruction sequence; only the branch displacement to each function's local drop epilogue differs. The Tier-1 Path C `beq 0x6d242` is the literal byte-for-byte twin of M2 and M4 list-contains drops.
+
+**Hypothetical patches (would-be M5 / M6, not staged).** Documented for future AVRCP 1.4+ Browsing channel work:
+
+- **(M5).** NOP `beq 0x6d242` at `0x6d1ce` (`38 d0` → `00 bf`). Structurally identical to M2 / M4. Would matter only if Y1 ever emits browse-channel responses.
+- **(M6).** NOP `strb.w r3, [r4, 0xf2]` at `0x6d1ec` (4 bytes, `84 f8 f2 30` → `00 bf 00 bf`). Structurally identical to M3 SET. Required as a pair with (M5) if it lands. Note: the chan-struct used here (`chan+0x10c`) is distinct from Path A/B's chan-struct, so `chan[0xf2]` in the browse context is a separate flag from M3's primary-channel chip-busy.
+- **M7 retracted.** `0xf2c4 bne 0xf384` is a queue path, not a drop. The branch target inserts the packet onto `txBrowsePacketList` and returns `r5=2` success.
+
+**Tier-1 reclassified to defensive after browse-channel discovery.** Initial classification of M5 / M6 / M7 as Tier-1 was premature. Walking the `chan[0x558]` gate branch target (`0xf384`) and the surrounding context reveals that `fcn.0xf290` exclusively handles the AVRCP Browsing channel (1.4+):
+
+- The `0xf384` branch is a QUEUE path (calls `fcn.0x6cc70` list-insert-tail and returns `r5=2` success), NOT a drop. Same shape as `fcn.0xf0bc`'s `0xf210` queue path — `chan[0x558]` is a queue-redirect flag, not a kill switch.
+- The list-circularity asserts inside `0xf384` reference `IsListCircular(&chnl->txBrowsePacketList)` at string offset `0xc8a64` — a `txBrowsePacketList` field by name.
+- `fcn.0xf290` writes to `chan[0x540..0x570]` (a dedicated browse sub-struct), distinct from `fcn.0xf0bc`'s `chan[0x308..0x320]` (primary AVCTP sub-struct).
+- Other AVRCP Browsing strings in the binary confirm separate Browse code path: `AVRCP_DisconnectBrowse status:%d` (`0xc8f48`), `[AVRCP] AvrcpHandleCBAVRCPBrowseCmdInd_Dispatcher pdu_id:%d parm_len:%d` (`0xc90a8`), `[AVRCP][BWS] Receive browse-packet operandLen:%d more:%d` (`0xdc076`).
+- `fcn.0x6d1a8` passes `chan+0x10c` (not `chan+8` like Path A/B) downstream — different L2CAP CID, different AVCTP layer, different channel.
+
+The 11 callers of `fcn.0x119fc` (at file offsets `0x12678`, `0x1273c`, `0x1329e`, `0x13342`, `0x133ee`, `0x134dc`, `0x1364a`, `0x15056`, `0x151d4`, `0x156a4`, `0x15896`) are therefore AVRCP Browsing PDU handlers — `GetFolderItems`, `ChangePath`, `SetBrowsedPlayer`, `GetItemAttributes`, and their error responses. None of these are emitted by Y1's current trampoline chain (per `feedback_avrcp13_only_scope` and the AVRCP 1.3-only project constraint).
+
+**Outcome.** M5 / M6 / M7 are **not load-bearing for current metadata delivery** — Y1 does not emit on the browse channel. They are also **out of scope** per the AVRCP 1.3-only project constraint. Not staged. Re-classified Tier-2 (defensive only): would be required if Y1 ever extends to AVRCP 1.4+ Browsing channel support, at which point they should land together with the trampoline-side browse-channel work.
+
+**Tier-2 gates — defensive only.**
+
+- `0x6d12c` (Path B INTERIM+opcode≠0): `msg[0]==0x0F AND msg[3]!=0` drops with `r0=1`. Won't fire under current trampoline emit semantics — T2/T8 INTERIM trampolines build `VENDOR_DEPENDENT` frames (opcode=0). If a future patch ever emits INTERIM via a non-`VENDOR_DEPENDENT` opcode (e.g. PASSTHROUGH INTERIM, which is not a valid AVRCP construct anyway), this gate would silently drop it.
+- `0xf2dc` (Path C MTU bound): drops if msg payload exceeds computed L2CAP MTU minus AVCTP header. Spec-bounded — would only fire on a malformed long-response from the marshaller.
+
+**Tier-3 — `0xf13e` Path A length-vs-MTU mismatch (downgraded).** Initial reading suggested this could drop Path A frames where `msg[9]!=0` (fragmented marker) but `msg.len < MTU`. Empirically refuted by Trace #41 evidence: `msg=540` IPC emits → wire TX frames mapped 3:3 (100% delivery) post-M2/M3. Either the gate's actual semantics are opposite of my initial read, or our marshaller's `msg.len` for `msg=540` consistently satisfies the gate. Either way, not currently load-bearing.
+
+**Tier-4 — RX-side list-contains drops (speculative).** `fcn.0x6cee4` (`0x6cf04`), `fcn.0x6cf30` (`0x6cf58`), and `fcn.0x6cf8c` (`0x6cfb2`) each call `fcn.0x6ccdc(conn-list)` and `beq` to a `r0=0xd` drop. These are upstream of the AVCTP RX state machine `fcn.0x6d9ac` and gate incoming AVCTP frames before they're dispatched. If the `g_active_conn_list` flicker that motivated M2/M4 affects RX too, then incoming `RegisterNotification` COMMANDs from the CT could be silently dropped — same end-user symptom (no metadata) but from the other direction (we never see the request rather than failing to deliver the response).
+
+The RX-side list state might be more stable than the TX side (it's populated by the inbound L2CAP-CONNECT handshake, which the CT initiates; the chip-busy flicker that motivated M2's drop is a TX-side phenomenon). But this is hypothesis, not measurement. Wire-side probe: `tshark`-decode the captured BT traffic, count CT-side `RegisterNotification COMMAND` frames vs mtkbt-side INTERIM responses. Significant disparity post-M4 would point at one of these RX gates.
+
+**`fcn.0xf0bc` and `fcn.0xae5e4` queue paths.** Both have conditional branches that look drop-shaped (`bne.w 0xf210` at `fcn.0xf0bc:0xf106` if `chan[0x310]` (txCurrent) is non-zero; `bne 0xae684` at `fcn.0xae5e4:0xae608` if `chan[0x16]` (L2CAP send-pending) is non-zero). Both are **NOT silent drops** — they take queue paths (`fcn.0x6cc70` list-insert tail; `r6=2` return) that the dispatcher caller treats correctly. Verified by following the queue-path exit (`movs r5, 2; pop`) and confirming the caller's `cmp r5, 2; bne` discriminator handles the queued case.
+
+**Chip-busy flag (`chan[0xf2]`) write-site enumeration.** `strb.w r0, [r4, 0xf2]` matches only at `0x6df42` (M3 site, already NOP'd). One additional site `strb.w r3, [r4, 0xf2]` at `0x6d1ec` (Path C, captured above as Tier-1 M6 candidate). No other writers in the binary. M3's SET-NOP strategy holds for Path A; M6 would be required if Path C carries any metadata.
+
+**INTERIM-marker (`chan[0xf0]`) reads.** Verified via byte-grep — two readers at `0x7e7a4` and `0x7ecf4` are both inside `ittt`/`itttt` blocks that compose multi-byte packed integer fields from `chan[0xee..0xf1]`. Not gates. `chan[0xf0]` is preserved data, not a control flag.
+
+**M1 pattern (narrow `cmp` discriminator widening) — re-audit.** Searched for `cmp r1, N` followed by conditional branch in the `0x10000-0x16000` range (avrcputil.c-class functions). Only `0x12230` (the M1 site) matches the discriminator-widening shape. Other matches (`0x138e2`, `0x138f0`, `0x138fc`, `0x1392e`, `0x1393e`, `0x1394c`) are length/count gates in an RX-side CMD-frame parser case-statement, not response-ctype discriminators.
+
+**Outcome.** No new patches staged. The two would-be M5 / M6 sites in `fcn.0x6d1a8` and the dispatcher gate at `0xf2c4` are all on the AVRCP Browsing channel (1.4+), confirmed by the `txBrowsePacketList` field name and the disjoint chan-struct offsets used by `fcn.0xf290` vs `fcn.0xf0bc`. Y1's current trampoline chain does not emit browse-channel responses (per AVRCP 1.3 scope constraint), so these gates are unreachable from any Y1-emitted frame. M-series static coverage is now exhaustive for `mtkbt`'s outbound TX path on the **primary AVCTP channel**; the browse channel is uncovered but also un-exercised. Three Tier-4 RX-side candidates documented for completeness — would only matter if the `g_active_conn_list` flicker affects inbound RegisterNotification COMMANDs from CTs, which requires wire-side measurement.
+
+**Confidence.** High on byte-level identification of every conditional-drop site in the audited functions (direct static analysis, MD5-anchored stock binary). High on the browse-channel scoping for `fcn.0xf290` → `fcn.0x6d1a8` (the `txBrowsePacketList` source-level field name + disjoint chan offsets are direct evidence). Low on Tier-4 RX-side relevance — that requires wire-side measurement we don't have.
+
+## Trace #43 (2026-05-17) — Post-M4 hardware regression on subscription-class CT; L2CAP-layer audit reveals deeper drop sites
+
+**Symptom.** User reflashed Bolt-class CT test rig with `feature/bluetooth-metadata-fixes` containing M2/M3/M4 patches. Bolt metadata-pane regression persists. M4's "structurally identical to M2/M4 list-contains gate" hypothesis was either wrong, partially right, or right-but-insufficient.
+
+**Re-examining Trace #41's wire-side claim.** Per `architecture_y1_btlog_undersampling` memory note: btlog captures only ~16–30% of actual UART traffic, so the "117 IPC emits / ~7 wire frames / ~6% delivery" derivation in Trace #41 had a load-bearing measurement on the noisy side of the ratio. Real msg=544 wire-delivery rate could have been anywhere in [20–38%] pre-M4. M4 may have lifted it further or had no effect — we don't know without a btlog-independent measurement.
+
+**Static audit of the L2CAP layer below M4.** Trace #42 stopped at `fcn.0xae5e4` (L2CAP_SendData). Continuing downstream into `fcn.0xae418` (fragment-build) → `fcn.0x7d204` (L2CAP send entry) → `fcn.0x7d034` (L2CAP send post-checks) → `fcn.0x7cecc` (queue insert) reveals **six additional silent-drop gates beneath M4**, of which one-to-three could plausibly fire under our metadata pipeline:
+
+| Tag | Function | Site | Mnemonic | Drop rc | Condition | Log? |
+|---|---|---|---|---|---|---|
+| L1 | `fcn.0x7d204` | `0x7d212` | `beq 0x7d260` | `r0=1` | `fcn.0x83014(CID)` returns 0 (CID-to-chan lookup miss: CID out of range, slot unused, or state==0) | no |
+| L2 | `fcn.0x7d204` | `0x7d21a` | `bne 0x7d260` | `r0=1` | `pkt[0xe] & 0xf6 != 0` (packet status-flag sanity mask) | no |
+| L3 | `fcn.0x7d204` | `0x7d23a` | `cbnz r0, 0x7d252` (drop on fall-through) | `r0=1` | `fcn.0x7cc7c(chan)` returns 0 (channel state ∉ {4 with bit 1 of `chan[0]` set, 5, 13, 14, 15}) | **yes** — `L2CAP_SendData state:%d return:%d` |
+| L4 | `fcn.0x7d034` | `0x7d096` | `blo 0x7d186` | `r0=1` | `chan[0x24] < (chan[0xc] + chan[0x1c] + pkt[0x2c])` when `arg3 > 3` (buffer-size sanity) | no |
+| L5 | `fcn.0x7d034` | `0x7d0a6` | `bhi 0x7d0b2` | `r0=0x11` | channel state ∉ {3, 4, 5} (tighter than L3) | **yes** — `l2cap: return no-connection state:%d` |
+| L6 | `fcn.0x7d034` | `0x7d170` (logical) | `cbz r0, 0x7d18a` then fall-through-fail-log | `r0=2` (success-shaped!) | `fcn.0x7cecc(chan, pkt, ...)` returns non-zero, which fires when `pkt[0xfe] == 0` (BDS_DISC) | **yes** — `l2cap QueueTx fail at cid:0x%x` |
+
+L6 is the most pernicious: even when the L2CAP queue-insert fails, the function returns `r0=2` (success-shaped). Caller chain (`fcn.0xae418` → `fcn.0xae5e4` → builder twins) all check `cmp r0, 2; bne <drop>` — they see `2` and treat as success. The packet is gone but no one upstream knows. Note however the trigger condition is `pkt[0xfe] == 0`, which is a packet-state flag, not a queue-depth flag. So L6 is silent-on-fail but rare in practice.
+
+**L3 / L5 are the strongest "matches the M-series pattern" candidates.** Both are chip-readiness checks: the L2CAP channel must be in a specific state set, otherwise drop. Under sustained A2DP saturation an AVRCP channel can briefly transition through states 6–11 (disconnect-pending, AMP move, etc.) — and any AVRCP TX during that window would silently drop. Both log, so we can directly test from existing logcat captures.
+
+**L1 / L2 / L4 are NOT safely patchable.** L1 would deref null after the lookup miss. L2 sends malformed packets if the status mask is meaningful. L4 is a buffer-size sanity check; bypassing it could write past the L2CAP TX buffer.
+
+**L3 / L5 patch candidates (would be L3-patch / L5-patch, NOT staged):**
+
+- **L3-patch.** `cbnz r0, 0x7d252` at `0x7d23a` (`50 b9`) → unconditional `b 0x7d252` (`0a e0`). Skips the L2CAP state check; channel can be in any state passed by L1. Risk: medium — if channel is in state 6 (disconnect-pending), forcing a send onto a soon-to-be-closed channel could trigger unexpected behaviour in `fcn.0x7d034`.
+- **L5-patch.** `bhi 0x7d0b2` at `0x7d0a6` (`04 d8`) → `00 bf` NOP, falls through into the success path. Permits sends on any state including ≥6. Same risk profile as L3-patch but inside the next stage of the L2CAP pipeline.
+
+Both patches would need to land **together** to bypass the dual-state check. Apply only L3 without L5 → L5 still drops most cases L3 was bypassing.
+
+**Other findings worth recording:**
+
+- **qPacket pool is `AVRCP_NUM_TX_PACKETS=4` per ctx, 2 ctx total = 8 packets system-wide** (per startup log at `fcn.0x13754:0x13798` printing `[AVRCP] AVRCP_NUM_TX_PACKETS:%d AVRCP_MAX_PACKET_LEN:%d` with literals `r1=4`, `r2=0x200`). Under a 117-emit msg=544 burst, pool exhaustion is plausible. Exhaustion semantics in `fcn.0x6cd48 → fcn.0x6cd18`: returns the list-head pointer (non-zero) rather than NULL when empty, so caller's `cmp r4, 0; beq <drop>` does NOT trigger — instead the caller treats the head-ptr as a qPacket and writes through it, which is **memory corruption**, not a clean drop. Field. If this fires in production, mtkbt's heap gets clobbered; the absence of daemon crashes argues the pool doesn't actually exhaust under our load — but it's a quiet hazard worth knowing.
+- **`fcn.0xae6ac` drains queue one-at-a-time per chip ACK.** Sets `chan[0x16]=1` per send, clears on ACK, dequeues next from `chan->txPacketList` via `fcn.0x6cd48`. If ACK rate < emit rate, queue grows unboundedly (well, until the qPacket pool exhausts — see above). No silent drop here.
+- **`chan[0x528]` (Path A/B txPending flag) writes**: SET at `0xf1f6` (success), CLEAR at `0xeb60` (chan-struct init/reset) and `0xfe48` (`fcn.0xfb04` AVCTP-callback path — likely link-state-change handler). Maintained correctly under normal operation.
+
+**Strongest next-step diagnostics (btlog-independent):** grep existing Bolt-session `adb logcat` capture for these strings; each tells us which (if any) gate is the actual blocker:
+
+| String to grep | Hits = | If hits > 0 |
+|---|---|---|
+| `L2CAP_SendData state:` | L3 fires | L3-patch candidate, plus L5-patch (paired) |
+| `l2cap: return no-connection state:` | L5 fires | L5-patch (with L3-patch paired) |
+| `l2cap QueueTx fail at cid:` | L6 fires | L6 candidate, but probably rare (BDS_DISC) |
+| `[AVCTP] AVCTP_ConnectRsp not in incoming state:` | AVCTP-side rejection | not a drop — investigate why we'd reject |
+| `[AVRCP] AVRCP_NUM_TX_PACKETS:` | startup confirms pool size (= 4, expected) | informational only |
+
+If none of L1–L6 fire (no log lines), the M-trampoline emits ARE reaching the wire and Bolt's regression is not delivery-rate-related at all — it would be frame-content, sequencing, or RX-side. That would point at:
+
+- **Frame content**: V1/V2/V6 SDP patches changed the advertised AVRCP version (1.0 → 1.3). Bolt's stack might require AVRCP 1.6+ shape for the metadata-pane code path to engage. AVRCP 1.6+ implementation is out of scope per `feedback_avrcp13_only_scope`, but we should know if this is the wall.
+- **Subscription sequencing**: Bolt might expect TRACK_CHANGED (`ev=0x02`) INTERIM before PSTAT/POS/REACHED_END/SETTINGS_CHANGED INTERIMs. If our T2 / T8 trampoline arm-order is wrong, Bolt could ignore the metadata after a "wrong-first-INTERIM" event.
+- **RX-side drop** (Trace #42 Tier-4): the `fcn.0x6cee4` / `fcn.0x6cf30` / `fcn.0x6cf8c` list-contains gates on the AVCTP RX path could be dropping Bolt's RegNotif COMMAND frames before we ever see them. Diagnostic: count CT-side COMMAND frames vs Y1-side `[AVCTP] cmdFrame->ctype:` log lines (the `fcn.0x6d048` and `fcn.0x6d0f0` builder entries log this at file `0x6d0c4` / `0x6d180`-region).
+
+**Outcome.** Six new candidate drop sites at the L2CAP layer (L1–L6), two of them (L3, L5) potentially patchable as paired NOPs **after diagnostic confirmation** they fire. Three secondary diagnoses if L1–L6 don't fire (Bolt frame-content rejection, subscription sequencing, RX-side gates). No patches staged — patching L3+L5 without confirming they fire risks introducing send-to-closed-channel issues without solving Bolt.
+
+**Confidence.** High on byte-level identification of L1–L6 sites (MD5-anchored stock binary, every gate verified with explicit byte patterns). Medium on the L3/L5 fire-under-our-load hypothesis (would explain Trace #41's <100% delivery but unverified against logcat). Low on pool-exhaustion-causing-corruption hypothesis (would manifest as crashes, not delivery regressions, so probably not load-bearing).
+
+## Trace #44 (2026-05-17) — Pre-M4 capture re-analysis: L-gates ruled out; M4 hypothesis structurally supported; no post-M4 capture exists yet
+
+**Goal.** With Trace #43's L-gate candidates outlined, check whether `L2CAP_SendData state:`, `l2cap: return no-connection state:`, or `l2cap QueueTx fail at cid:` actually appear in the existing Bolt-session btlog. mtkbt internal logs ARE captured by btlog (271 `avctpCB AVCTP_EVENT` hits, hundreds of `[AVCTP] chid:` hits, 132 `avrcp: sbunit type:` hits), so absence of L-gate logs is informative — they're not firing.
+
+**Capture-timing audit.** The Bolt-session capture `dual-bolt-20260516-1453` is timestamped `2026-05-16 19:00 UTC`. M4 commit `cacf389` is timestamped `2026-05-16 20:05 UTC`. The capture is **65 minutes pre-M4**. Therefore the existing data reflects the M2/M3-only build (v2.3.0 just-released), not post-M4. No post-M4 capture exists in `/work/logs/`.
+
+**btlog grep results (pre-M4 Bolt session):**
+
+| String | Hits | Source | Interpretation |
+|---|---|---|---|
+| `avctpCB AVCTP_EVENT` | 271 | `fcn.0xfb04` | AVCTP callback fires on every channel event — confirms mtkbt internal logs DO reach btlog |
+| `avrcp: sbunit type:` | 132 | `fcn.0xf0bc:0xf1d4` (just before Path B `fcn.0x6d0f0` call) | Path B in the dispatcher fired 132 times — confirms fcn.0xf0bc is routing as expected |
+| `[AVCTP] cmdFrame->ctype:` | 0 | `fcn.0x6d048:0x6d0ce` (Path A entry log) | Path A never fired — all 132 routes went to Path B, consistent with `msg[9]=0` for `msg=544` |
+| `L2CAP_SendData state:` | 0 | `fcn.0x7d204:0x7d244` (L3 drop log) | **L3 does not fire** — L2CAP channel state always passes `fcn.0x7cc7c` |
+| `l2cap: return no-connection state:` | 0 | `fcn.0x7d034:0x7d0b4` (L5 drop log) | **L5 does not fire** — channel state always in {3,4,5} |
+| `l2cap QueueTx fail at cid:` | 0 | `fcn.0x7d034:0x7d17a` (L6 drop log) | **L6 does not fire** — `pkt[0xfe]` always non-zero |
+| `(qPacket->data_len ` | 0 | `fcn.0xed50/0xef08` header-builder data-len asserts | Header builders never assert (qPackets always have non-zero data_len) |
+| `IsListCircular` | 0 | various queue-corruption asserts | No queue corruption events |
+
+**Conclusion.** **Trace #43's L1–L6 hypothesis is refuted by direct measurement.** No L-gate fires in the pre-M4 Bolt session. The L2CAP layer is not the bottleneck.
+
+**Conclusion (positive).** The 132 `avrcp: sbunit type:` log hits in btlog confirm `fcn.0xf0bc` is routing `msg=544` IPC emits to Path B (`fcn.0x6d0f0`) 132 times pre-M4. With M4 unpatched, every one of those 132 hits the `0x6d116` list-contains drop and returns `r0=0xd` — exactly Trace #41's structural model. **M4 is structurally the right patch.**
+
+**3-second-cadence wire evidence (logcat).** Bolt sends RegNotif COMMAND every 3 seconds (the AVCTP V13 §3.3.5 retry timer):
+
+- 98 `JNI_AVRCP: MSG_ID_BT_AVRCP_CMD_FRAME_IND size:13` hits over a 7m20s window. The 13-byte size is consistent with one RegNotif CMD frame (AVCTP header + ctype/subunit/opcode + companyID + PDU + reserved + param_len + event_id).
+- Timestamps form a clean 3-second cadence: 14:50:45.462, 48.450, 51.447, 54.464, 57.453, ... continuing across the whole session.
+- Outbound `EXTADP_AVRCP: msg=544` emits land 0–30 ms after each inbound CMD (117 total — the Y1 trampoline T8 fires INTERIM on every CMD, including retries).
+- The cadence means Bolt never receives an INTERIM response: per V13 §3.3.5 the CT should stop retrying after an INTERIM lands. Continuous 3 s retries → 100% wire-side drop of INTERIM, consistent with the unpatched `0x6d116` gate dropping every Path B emit.
+
+**Trampoline state confirms only one event arms persistently.** Y1Patch debug logs show `tramp.state[13..19] = 0 0 1 0 0 0 0` in steady state — only `state[15]` (sub_papp, `ev=0x08` PLAYER_APPLICATION_SETTING_CHANGED) is armed. `state[14]` (sub_play_status, `ev=0x01`) is briefly armed at session start (`state[14]=1` in the very first dump) and clears on the first metachanged broadcast, never re-arming. This is consistent with: Bolt subscribes to multiple events but only ONE of T8's emits got registered before Bolt gave up retrying that one. State[15]=PAPP is sticky because PAPP CHANGED is never triggered by anything in our pipeline (no source of "player app setting changed" event), so the arm-byte never clears.
+
+**Stale `output/mtkbt.patched` discovered.** The file at `/work/koensayr/output/mtkbt.patched` (timestamped 2026-05-15) has bytes:
+- `0x6d06e`: `37 d0` — M2 NOT applied (stock byte)
+- `0x6df42`: `84 f8 f2 00` — M3 NOT applied (stock byte)
+- `0x6d116`: `41 d0` — M4 NOT applied (stock byte)
+
+MD5 `926b8e808693a4c44028ee257b33e898` ≠ current `OUTPUT_MD5 a10ca9636417a0ed71495dfa11b5eff0`. This file predates the M-series and is leftover from an earlier patcher version. `apply.bash` regenerates output to `${PATH_TMP_STAGE}/` and does NOT read this file, so it's a misleading artefact but not actively used in the flash workflow. Consider deleting it to avoid future confusion.
+
+**Diagnostic recommendation for the user.** Before further investigation, confirm M4 is actually on the flashed device:
+
+```
+adb pull /system/bin/mtkbt /tmp/mtkbt-onflash
+md5sum /tmp/mtkbt-onflash
+```
+
+Expected: `a10ca9636417a0ed71495dfa11b5eff0` (post-M2/M3/M4). If different, M4 wasn't applied; investigate why apply.bash didn't pick it up (cached binary? stale staging? wrong branch on test host?).
+
+If M4 IS confirmed on device and Bolt still shows no metadata:
+
+- **Capture a post-M4 logcat** of a fresh Bolt session. Compare the `MSG_ID_BT_AVRCP_CMD_FRAME_IND` cadence. If the 3-second retry cadence has STOPPED (e.g., 5–8 CMD frames total instead of 98 over the same window), M4 lifted the wire delivery and Bolt subscribed successfully — the metadata-pane regression is then **not a delivery problem** and points at frame content (V1/V2/V6 SDP shape, AVRCP-1.3-vs-1.6 dashboard-pane requirements, or CHANGED-event sequencing/timing).
+- If the 3-second retry cadence persists post-M4, there IS still a drop site we haven't found. Next candidate to audit: the IPC layer between JNI (libextavrcp / libextavrcp_jni) and mtkbt daemon over `/dev/socket/bt.int.adp`. If that socket is `SOCK_DGRAM` with a small kernel buffer, msg=544 burst sends could be dropping at the kernel-side enqueue (the Trace #40 pattern but in the JNI→mtkbt direction).
+
+**Outcome.** M4 hypothesis still intact, L1–L6 ruled out. Next move is user-side MD5-verification of the flashed binary + a post-M4 logcat capture to distinguish "M4 didn't apply" from "M4 applied but a different blocker remains".
+
+**Confidence.** High on L-gate rule-out (direct btlog measurement, zero hits across three independent log strings). High on the pre-M4 capture being structurally consistent with M4 as the fix (132 Path B routes + 100% wire drop + 3 s retry cadence). High on the stale `output/mtkbt.patched` finding (direct byte-level inspection). Cannot disambiguate "user didn't actually flash M4" vs "M4 doesn't help" without the user-side MD5 check or a post-M4 capture.
+
+## Trace #45 (2026-05-17) — User confirmed M4 on device; T8 emits INTERIM-ACK for AVRCP 1.4+ events Bolt subscribes to
+
+**User-side MD5 check confirms M4 applied.** Bolt still shows no metadata. The drop hypothesis is dead — something past the wire is rejecting our responses or interpreting them differently than expected.
+
+**Wire-frame decode of btlog reveals Bolt's actual subscription order.** Pattern `00 19 58 31 00 00 05 XX` (CompanyID + RegNotif PDU + reserved + paramlen=5 + event_id) captured 63 times in `dual-bolt-20260516-1453/btlog.bin` — likely IPC-logged inbound CMD frames; under-sampled vs the 98 in logcat (≈64% capture rate). All 63 hits have ctype=0x00 (CONTROL) preceding the AVRCP payload. The events Bolt subscribes to:
+
+| event_id | name | AVRCP version | hits | first appearance |
+|---|---|---|---|---|
+| `0x01` | PLAYBACK_STATUS_CHANGED | 1.3 | 8 | 1st |
+| `0x02` | TRACK_CHANGED | 1.3 | 16 | 3rd |
+| `0x05` | PLAYBACK_POS_CHANGED | 1.3 | 14 | 4th |
+| `0x08` | PLAYER_APPLICATION_SETTING_CHANGED | 1.3 | 8 | 8th |
+| `0x09` | NOW_PLAYING_CONTENT_CHANGED | **1.4+** | 3 | **2nd** |
+| `0x0b` | ADDRESSED_PLAYER_CHANGED | **1.4+** | 1 | 6th |
+| `0x0c` | UIDS_CHANGED | **1.4+** | 1 | 7th |
+| `0x0d` | VOLUME_CHANGED | **1.4+** | 12 | 5th |
+
+The **second** event Bolt asks for is **`0x09 NOW_PLAYING_CONTENT_CHANGED` — an AVRCP 1.4+ event**, before it even subscribes to TRACK_CHANGED.
+
+**T8 violates AVRCP 1.3-only scope by INTERIM-ACK'ing 1.4+ events.** `_trampolines.py:2030–2075`:
+
+- `0x09 NOW_PLAYING_CONTENT_CHANGED` → emit INTERIM, arm `state[20]` (`sub_now_playing_content`)
+- `0x0a AVAILABLE_PLAYERS_CHANGED` → emit INTERIM (no arm)
+- `0x0b ADDRESSED_PLAYER_CHANGED` → emit INTERIM with PlayerID=0, UidCounter=0
+- `0x0c UIDS_CHANGED` → emit INTERIM with UidCounter=0
+- `0x0d VOLUME_CHANGED` → falls through to `t8_unknown_event` → NOT_IMPLEMENTED (spec-correct)
+
+Per `feedback_avrcp13_only_scope`: *"Strict scope: AVRCP 1.3 (V13 + ESR07). [...] All other 1.4+/1.5+/1.6+ PDU/event names forbidden outside INVESTIGATION.md."* The `0x09 / 0x0a / 0x0b / 0x0c` handlers are scope violations. The inline comment at line 2027–2029 (`Events 0x09..0x0c — INTERIM ack; only 0x09 arms its gate (sub_now_playing_content). 0x0a / 0x0b / 0x0c stay INTERIM-only`) confirms the intent was "1.4+ CT compatibility" — pre-dates the strict-1.3 scope rule.
+
+**Hypothesis.** Bolt is a 1.4+ CT. Per AVRCP 1.3 §6.7.1 a 1.3 TG should respond `NOT_IMPLEMENTED` to RegNotif for events outside the 1.3 set {0x01..0x08}. By INTERIM-ACK'ing `0x09 / 0x0b / 0x0c`, we're inconsistent with our SDP (advertised as 1.3 via V1/V2/V6) — Bolt sees mixed signals: "TG advertises 1.3 but accepts 1.4+ subscriptions." Bolt's stack may then expect 1.4+ behaviour for the AVRCP-1.4 metadata flow (Browse channel for NOW_PLAYING list, ADDRESSED_PLAYER state machine, GetItemAttributes on UIDS), find that we don't support any of it, and fall back to displaying no metadata.
+
+A spec-strict 1.3 TG that returns `NOT_IMPLEMENTED` for events ≥ 0x09 forces a 1.4+ CT to fall back cleanly to the 1.3 metadata flow (RegNotif PSTAT/TRACK/POS/PAPP + GetElementAttributes on TRACK_CHANGED edges). That flow is fully supported by our current trampolines.
+
+**Proposed patch (would be a trampoline edit, NOT staged yet).** In `_trampolines.py:2030–2075`, replace the four 1.4+ event handlers (`t8_check_9 / t8_check_a / t8_check_b / t8_check_c`) with direct fall-through to `t8_unknown_event` (NOT_IMPLEMENTED). That is, after `t8_check_8`'s `b.w t8_done` for PAPP, the next instruction becomes `b.w t8_unknown_event` (or simply remove the four `t8_check_*` labels and let any `event_id ≥ 0x09` reach the unknown-event handler). State[20] (`sub_now_playing_content`) also stops being armed, which is correct under 1.3 scope.
+
+Risk profile:
+
+- **Low correctness risk.** Returning NOT_IMPLEMENTED is the AVRCP 1.3-spec-correct response. 1.3 CTs are unaffected (they don't subscribe to 0x09+). 1.4+ CTs receive an explicit "not supported" signal and fall back to 1.3 flow.
+- **One regression risk.** A CT that requires 0x09 INTERIM-ACK to proceed (rather than falling back gracefully) would lose its current INTERIM-ACK and not subscribe at all. None of the CTs in our memory-documented test matrix are known to require this. If a CT regresses, the fix is reversible (restore the four handlers).
+- **State-byte impact.** `state[20]` writes from `_emit_subscription_write(a, 1, 20, ...)` would no longer happen, which removes one path that touches the state file. `T5 / T9 CHANGED` emits that gate on `state[20]` would never fire. This is fine per scope — we're not supposed to emit 1.4+ CHANGED events anyway.
+
+**Other findings from this re-analysis.**
+
+- `[AVCTP] cmdFrame->ctype:` log (in `fcn.0x6d048`, the Path A finalizer) has 0 hits in btlog. The `avrcp: sbunit type:` log (in `fcn.0xf0bc`, immediately before Path B call) has 132 hits — confirming Path B is the only path used for `msg=544` (consistent with M4 being the correct gate). msg=540 uses Path A, but there were only 3 of those in this session.
+- Y1Patch trampoline state dumps show `state[14]` (`sub_play_status`), `state[15]` (`sub_papp`), and `state[16]` (`sub_track_changed`) all get armed by T8/T2 emits, then `state[14]` and `state[16]` get cleared promptly by T5/T9 CHANGED emits (per AVRCP §6.7.1). `state[15]` (PAPP) stays armed persistently because there's no internal PAPP-change trigger in our pipeline (Y1 user doesn't toggle Repeat/Shuffle during normal driving). This is correct behaviour, not a bug.
+- TRACK_CHANGED INTERIM reads `y1-track-info[0..7]` for track UID. If Bolt subscribes to TRACK_CHANGED before the music app has played a single track, the read returns all-zero UID. Spec-strict CTs may not accept an all-zero UID. Defensive but probably not Bolt's issue (Bolt subscribes during playback, not before).
+- Bolt's RegNotif sequence is `01 09 02 09 01 01 01 01 01 01 01 02 02 ...` — interleaved 1.3 + 1.4 events with `0x09` being the second event ever asked for, strongly suggesting Bolt's subscription order is `[PSTAT, NOW_PLAYING, TRACK_CHANGED, POS, VOLUME, ADDRESSED_PLAYER, UIDS, PAPP]` with retries inflating each row.
+
+**Outcome.** Strong hypothesis identified: scope-violating 1.4+ event INTERIM-ACK in T8 may be confusing 1.4+ CTs into expecting 1.4+ TG behaviour we don't support. Concrete patch proposed (revert to spec-correct NOT_IMPLEMENTED). Not staged — wants user review since this reverses an intentional "1.4+ CT compatibility" choice the trampoline author made. If user approves, the patch is a ~10-line trampoline edit; M4 stays as-is.
+
+**Confidence.** High on the byte-level finding (Bolt's RegNotif order verified from btlog wire-frame extraction). Medium on the causal chain (1.4+ INTERIM-ACK → Bolt enters 1.4+ mode → Bolt's flow breaks); reasonable but not proven without a post-trampoline-edit capture. Low on whether this is the *only* remaining issue — there may be additional content-correctness issues post-M4 that emerge once 1.4+ events stop being mis-acknowledged.
+
+## Trace #46 (2026-05-17) — Trace #45 retracted; Pixel HCI snoop comparison surfaces TRACK_CHANGED Identifier divergence as the strongest remaining lead
+
+**Trace #45 retraction.** User pointed out the T8 1.4+ event handlers (`0x09 / 0x0a / 0x0b / 0x0c`) were added in Trace #32 specifically to mirror Pixel-in-AVRCP-1.3-mode's wire shape against the same Bolt CT. Re-checked the Pixel-4 btsnoop at `/work/logs/pixel4-bugreport/FS/data/misc/bluetooth/logs/btsnoop_hci.log` (capture date 2026-05-13, Pixel forced to 1.3 mode):
+
+| Event | Bolt CMD | Pixel response |
+|---|---|---|
+| `0x01` PLAYBACK_STATUS_CHANGED | Notify | Interim with PlayStatus |
+| `0x02` TRACK_CHANGED | Notify | Interim with `0x0000000000000000 (SELECTED)` |
+| `0x05` PLAYBACK_POS_CHANGED | Notify | Interim with `SongPosition: 0ms` |
+| `0x08` PLAYER_APPLICATION_SETTING_CHANGED | Notify | Interim |
+| **`0x09`** NOW_PLAYING_CONTENT_CHANGED | Notify | **Interim** (zero-payload) |
+| **`0x0a`** AVAILABLE_PLAYERS_CHANGED | Notify | **Interim** (zero-payload) |
+| **`0x0b`** ADDRESSED_PLAYER_CHANGED | Notify | **Interim with PlayerID:0, UidCounter:0** |
+| **`0x0c`** UIDS_CHANGED | Notify | **Interim with UidCounter:0** |
+
+Pixel-in-1.3-mode INTERIM-ACKs all four 1.4+ events. T8's behavior is the correct mirror, not a scope violation. Trace #45's "revert the 1.4+ INTERIM ACKs" recommendation is **withdrawn**.
+
+**Method shift.** Switch from "audit Y1 for scope-violating behaviour" to "diff Y1 vs Pixel on the wire for the same Bolt CT, find the divergence". The Pixel-Bolt capture works (Pixel's pane presumably engages on Bolt — same hardware setup). The Y1-Bolt capture (pre-M4) does not. Find what's different.
+
+**Wire-level diff (Pixel vs Y1) — known divergences and candidates:**
+
+| Surface | Pixel | Y1 | §-spec | Material? |
+|---|---|---|---|---|
+| `RegNotif INTERIM` shape for `0x09 / 0x0a / 0x0b / 0x0c` | INTERIM-ACK (with zero/empty payload) | INTERIM-ACK (same) | both within §6.7.1 carve-out | no — matched in Trace #32 |
+| `TRACK_CHANGED INTERIM` Identifier | `0x0000000000000000` (SELECTED) then `0x0000000000000001` after PLAY (small monotonic counter) | y1-track-info[0..7] = audio_id (real BE u64 songid, e.g. `0x0000000175A22BB7` for 6302084023) | §5.4.2 Tbl 5.30: Identifier is a UID; 0 = "SELECTED" semantic for 1.3 | **plausible — Bolt may treat large UIDs as 1.4+ Browse-folder semantics and ignore for the metadata pane** |
+| `GetElementAttributes` response shape | Drops unsupported attributes entirely (returns Count=4 with `{0x01, 0x04, 0x05, 0x07}` even when request asked for `{0x01..0x07}`) | Emits all requested attribs; unsupported get `len=0` (post-E1 patch per Trace #29) | §5.3.4 strict: zero-length emit; Pixel violates §5.3.4 | **plausible inverse to E1's hypothesis — maybe Bolt is coded against Pixel's §5.3.4 violation and trips on Y1's strict-compliant zero-length attribs** |
+| `PASSTHROUGH PLAY` ack | Accepted | Accepted (P1 patch) | both spec-compliant | no — same |
+| `InformDisplayableCharacterSet` ack | Rejected ("Invalid Command") | Rejected (T_charset patch per Trace #33) | both spec-permissible | no — same |
+| GetCapabilities EventsSupported set | `{0x01, 0x02, 0x05, 0x08, 0x09, 0x0a, 0x0b, 0x0c}` | same (Trace #32) | both spec-permissible | no — same |
+| `PlaybackPositionChanged` CHANGED cadence | ~1 s, with Bolt re-subscribing within 20–40 ms after each CHANGED (strict §6.7.1) | Y1's T9 emits POS CHANGED on PositionTicker 1-s ticks; clears state[13] per §6.7.1 strict; CT must re-subscribe to re-arm | both strict §6.7.1 | no — should match |
+
+**Strongest remaining hypothesis: TRACK_CHANGED Identifier divergence.** Pixel sends `0x0000000000000000` (1.3 SELECTED semantic). Y1 sends the real audio_id from `y1-track-info[0..7]` — currently a large 64-bit songid (e.g. `0x0000000175A22BB7`). The inline comment in `extended_T2` at `_trampolines.py:711–717` and again at `t5_track_changed` at `_trampolines.py:894–896` explicitly states "Strict 1.4+ CTs cache GetElementAttributes keyed by the TRACK_CHANGED Identifier; a per-track id forces cache invalidation + re-query on every track edge."
+
+That's a 1.4+ semantic optimization (browseable-folder UIDs). For an AVRCP 1.3 TG (which our SDP advertises), the spec-clean Identifier is `0x0000000000000000` (matches Pixel-in-1.3-mode). The "per-track id forces cache invalidation" rationale was a Trace #32-era optimization for strict-1.4+ CTs, but the same memory note `feedback_avrcp_spec_compliance` says "every Koensayr/AVRCP change must move toward strict AVRCP-spec compliance. Spec-permissible options can be chosen for CT-compat reasons, but the chase starts from 'what does the spec say'."
+
+Spec says: 1.3 TG → Identifier=0. We're a 1.3 TG. Identifier should be 0.
+
+**Proposed patch (would be a trampoline edit, NOT staged yet).**
+
+In `extended_T2` (track UID emit for INTERIM TRACK_CHANGED) at `_trampolines.py:~657–670`: skip the y1-track-info `open + read` and leave `sp+0..7` zero-initialized. Same in `t5_track_changed` (CHANGED TRACK_CHANGED).
+
+Result: every TRACK_CHANGED INTERIM and CHANGED emits Identifier `0x0000000000000000`, matching Pixel-in-1.3-mode. Bolt sees the spec-clean 1.3 semantic.
+
+Risk profile:
+
+- **Low correctness risk.** Pixel-in-1.3-mode does this exact thing against the same Bolt and works.
+- **One regression risk.** Strict-1.4+ CTs that cache GetElementAttributes keyed by Identifier won't see a cache-invalidation signal on track edges, so they could display stale metadata. Mitigation: Bolt is the only subscription-class CT in our test matrix; if no CT in the matrix is "strict-1.4+ cache-keyed", no regression.
+- **One behavior change.** TRACK_CHANGED's `0x0000000000000001` second-edge increment that Pixel does — we can either leave at 0 always (truer 1.3 mirror — Pixel's increment is itself a 1.4+ leak) or replicate a per-edge counter (closer to Pixel exact). Probably leave at 0 first; revisit if Bolt requires the counter.
+
+**Secondary hypothesis: E1's zero-length attribute emit may be the wrong direction.** Pixel violates §5.3.4 by dropping unsupported attributes entirely — and works against Bolt. Y1 (post-E1) emits all requested attributes including zero-length unsupported — strict §5.3.4 compliant. If Bolt's display code is calibrated against Pixel's §5.3.4 violation, Y1's strict compliance may trip it.
+
+Trace #29 added E1 with the opposite reasoning: Bolt's pane was blocked by libextavrcp dropping zero-length, fix was to emit them. That conclusion may have been confounded by the M2/M3/M4-era wire-delivery problem — Bolt wasn't receiving anything at all, so the "blocked by zero-length-drop" theory was unfalsifiable.
+
+**Action plan (do not stage yet — wants user direction):**
+
+1. **Best first move (low-cost, low-risk):** Patch `extended_T2` + `t5_track_changed` to emit Identifier `0x0000000000000000` (skip y1-track-info read). One change touches two sites. Re-flash, test Bolt. If pane engages, problem found.
+2. **If (1) doesn't help:** Try reverting E1 (let libextavrcp drop unsupported attribs again). The patch is a single `cbz` flip in `patch_libextavrcp.py` — small, reversible.
+3. **If neither (1) nor (2) help:** A fresh post-M4-with-M-trampoline-instrumentation logcat from a Bolt session, plus the wire-side Y1 btsnoop equivalent, are the only path forward.
+
+**Confidence.** High on Pixel↔Bolt wire-shape baseline (direct tshark decode of the Pixel snoop). High on the byte-level Identifier divergence (T2/T5 code reads y1-track-info, Pixel sends 0). Medium-low on the Identifier=0 patch fixing Bolt — strong correlation with spec compliance but no proof until tested. Medium on E1 being the wrong direction — possible but speculative.
+
+## Trace #47 (2026-05-17) — Exhaustive Pixel↔Bolt vs Y1↔Bolt wire-shape diff; Bolt's initial-burst pattern differs dramatically
+
+**Goal.** Per user direction, investigate every plausible Pixel-vs-Y1 divergence using empirical captures. Identifier was already-tested. E1 hypothesis was retracted because Pixel emits Artist/Album when data is present. Push further: AVCTP transactionID/IPID/CR, fragmentation, SDP records, PASSTHROUGH latency, AVDTP signaling, L2CAP setup, HCI connection params, and initial-burst behaviour.
+
+**Data sources.** Pixel-4-with-Bolt HCI snoop at `/work/logs/pixel4-bugreport/FS/data/misc/bluetooth/logs/btsnoop_hci.log` (Pixel forced to AVRCP 1.3). Y1-with-Bolt capture at `/work/logs/dual-bolt-20260516-1453/` (logcat.txt + btlog.bin). SDP-tool browse output at `/work/logs/pixel4-sdptool-browse-avrcp-1.3.xml` vs `/work/logs/y1-sdptool-20260513-1512.log`.
+
+### Pixel↔Bolt vs Y1↔Bolt — wire-level diff (each dimension verified empirically)
+
+| Dimension | Pixel | Y1 | Material? |
+|---|---|---|---|
+| **AVCTP transactionID** | Monotonic 0x0..0xF wrap (`0x00, 0x01, 0x02, …`) per Pixel-driven response | Y1 reads from `conn[17]` for INTERIMs (matches CT's CMD TID) and from `y1-trampoline-state[8]` for proactive CHANGEDs | no — spec-correct, Y1 mirrors CT pattern |
+| **AVCTP packet_type** | All `0` (Single) even at 125-byte GEA responses | Path A (msg=540 GEA) goes through `fcn.0xed50` fragmenter; **likely emits Start+End** for the 644-byte IPC payload (~500B wire) | **plausible — Y1 fragments where Pixel doesn't** |
+| **AVCTP CR / IPID** | CR=1 (Response), IPID=0 (Profile OK) | same | no |
+| **L2CAP MTU** | 512 (CONFIG-negotiated with Bolt) | 512 (per `AVRCP_MAX_PACKET_LEN:512` startup log) | no |
+| **L2CAP retransmission mode** | ERTM proposed, Basic accepted (Bolt rejects ERTM) | Basic (default) | no — both end up Basic |
+| **PASSTHROUGH ack latency** | min 0.5 ms, max 14 ms, avg 2 ms (n=106) | same-millisecond per logcat (sub-ms granularity not observable) | no — both fast |
+| **AVDTP signaling order** | Discover → GetAllCapabilities → SetConfig → Open → Start (then later Suspend) | unverified for Y1 in this capture but stock pattern same | no — assumed match |
+| **HCI connection params** | CoD 0x340408 for Bolt (Audio/Video Hands-free, services: Rendering ObjectTransfer Audio), Encryption disabled (link layer) | Y1 HCI not captured | no diagnostic |
+| **GEA response wire size** | 70 bytes (no metadata) / 110–125 bytes (with metadata) — **always single AVCTP packet** | msg=540 IPC payload is 644 bytes — exceeds 512-byte L2CAP MTU → AVCTP fragmentation REQUIRED on Y1 side | **Y1 emits ≥2 wire fragments; Pixel emits 1** |
+| **SDP — AVRCP TG record version (attr 0x0009)** | 0x110e @ 0x0103 (AVRCP 1.3) | 0x110e @ 0x0103 (AVRCP 1.3, post V1) | no |
+| **SDP — ProtocolDescriptorList (attr 0x0004)** | L2CAP PSM 0x0017 + AVCTP 1.2 (0x0102) | same | no |
+| **SDP — SupportedFeatures (attr 0x0311)** | 0x0001 (Cat 1 only) | 0x0001 (Cat 1 only, post V8) | no |
+| **SDP — BrowseGroupList (attr 0x0005)** | 0x1002 PublicBrowseGroup | same | no |
+| **SDP — Browse PSM (attr 0x000d)** | absent | absent (post V7) | no |
+| **SDP — ServiceName (attr 0x0100)** | `"AV Remote Control Target "` | `"Advanced Audio "` (post S1) — **same name as Y1's A2DP source record** | minor — cosmetic |
+| **SDP — ProviderName (attr 0x0102)** | `" "` (single space) | **absent** | minor — both spec-permissible |
+| **SDP — ServiceRecordState (attr 0x0002)** | **absent** | `0x000001aa` / `0x0000021e` (varies) | minor — Y1's presence may force Bolt SDP cache refresh on change, but doesn't break correctness |
+| **SDP — AVRCP CT record (0x110e in ServiceClassIDList)** | **present** at handle 0x00010005 | **absent** | unclear — Pixel advertises both TG+CT, Y1 only TG |
+| **SDP — GATT/GAP records (0x1800, 0x1801)** | **present** at handles 0x00010000, 0x00010001 | absent | unclear — Y1 isn't LE-capable for these profiles |
+| **SDP — total service records advertised** | 16 (incl. HFG, HFP, NAP, PBAP, SMS/MMS, SIM, OPP, NearbySharing, GATT) | 5 (A2DP, AVRCP TG, PBAP, NAP, OPP) | no — Bolt only cares about AVRCP TG |
+| **Initial-burst pattern at AVCTP session start** | Bolt sends **GetCapabilities first** at T+0ms → Pixel responds (Count=8 events). Then InformDisplayableCharacterSet (rejected). Then 7 RegNotifs all within 75 ms. Then GEA. All within ~115 ms | Bolt sends **RegNotif PSTAT first** at T+0ms. No GetCap, no InformDisplay. Bolt then RETRIES the same RegNotif at 3-second intervals for 2m12s before finally querying GetCap | **YES — Bolt's first AVRCP transaction differs fundamentally** |
+| **First GetCap query** | T+0ms (immediately after AVCTP CONNECT) | T+2m12s (mid-session, after 44 retries of various RegNotifs) | **YES — Bolt skipped discovery for Y1** |
+
+### Headline finding: Bolt skips the discovery handshake with Y1
+
+In the Pixel↔Bolt capture, Bolt's first AVRCP CMD is `GetCapabilities(Events Supported)` within 13 ms of AVCTP CONNECT. Bolt then receives Pixel's 8-event list, fires off 7 `RegisterNotification` CMDs in parallel, and is fully subscribed within ~115 ms. From frame 1480 to frame 1539 every CMD got an immediate ACK or RSP.
+
+In the Y1↔Bolt capture, Bolt's first AVRCP CMD is `RegisterNotification(PlaybackStatusChanged)` (event 0x01) at logcat `14:50:45.462`. **No `GetCapabilities` query precedes it.** Then Bolt retries the same RegNotif at exactly 3-second intervals (the AVCTP V13 §3.3.5 response timer) for 2 m 12 s before finally sending its first `GetCapabilities` at `14:52:57.666`.
+
+This is not "Bolt is broken" or "Bolt retries because of dropped INTERIMs alone". It's **Bolt deciding to skip the discovery flow entirely with Y1**. The most likely explanations:
+
+1. **Bolt has cached SDP for Y1's BD_ADDR from a prior bonding session.** If a previous Y1 firmware version advertised different SDP attributes (e.g., v2.2.0 or earlier without V1-V8 patches), Bolt's cache may have stale data — including the assumed event list and capability set. Bolt skips a fresh query because it "already knows" Y1's capabilities. The 2m12s eventual GetCap suggests a long Bolt-side timeout before forced refresh.
+2. **Y1's SDP record signals "already-known-vendor" via some attribute combo** that triggers Bolt's quick-connect path. The duplicate ServiceName `"Advanced Audio "` between the A2DP source (handle 0x00010002) and AVRCP TG (handle 0x00010003) records is suspicious — this isn't how Pixel-Bolt looks.
+3. **Bolt's pairing flow is fundamentally different for Y1's CoD/EIR pattern** vs Pixel's.
+
+The 2m12s delay between session start and first GetCap query is the single biggest behavioural difference observed. It exists regardless of M2/M3/M4 — these patches only affect wire-side response delivery, not Bolt's CT-side discovery behaviour.
+
+### Secondary finding: Y1's GEA fragments AVCTP; Pixel doesn't
+
+Pixel's GEA responses with full Title/Artist/Album/MediaNum/Total/PlayTime are 110–125 wire bytes — comfortably under the 512-byte L2CAP MTU — and emit as **single AVCTP packets** (packet_type=0).
+
+Y1's outbound `msg=540` IPC buffer is 644 bytes (logcat: `EXTADP_AVRCP: msg=540, ptr=0x52380638, size=644`). After IPC framing overhead this is likely 500–600 wire bytes of AVRCP payload. At >512 bytes this **exceeds the L2CAP MTU and triggers AVCTP fragmentation** (`fcn.0xed50` Path A's fragmenter). Bolt's reassembler may handle the Start+End packet sequence differently from a Single packet; bugs in CT reassembly logic are well-documented across AVRCP implementations.
+
+Why is Y1's GEA so much larger than Pixel's?
+
+1. **Y1 emits all 7 requested attributes** (Title, Artist, Album, MediaNum, TotalNum, Genre, PlayingTime) — including zero-length entries for missing data (E1 patch, Trace #29). Pixel drops missing attributes entirely.
+2. **Per-attribute overhead** is 8 bytes (4-byte attr_id + 2-byte char_set + 2-byte length) — for 7 attribs that's 56 bytes vs Pixel's 4×8 / 6×8 = 32/48 bytes.
+3. **CharSet encoding**: Y1 may emit UTF-16 (1015) where Pixel emits UTF-8 (106). Doubles the byte count for ASCII text. (Not verified — would need Y1 wire bytes to confirm.)
+
+If E1's zero-length emit (~56 bytes of attr headers Pixel doesn't emit) plus possible UTF-16 encoding doubles the payload past 512 bytes, Y1 fragments and Pixel doesn't.
+
+### Static-audit findings that are NOT divergences
+
+- **AVCTP transactionID semantics, IPID/CR bits**: identical wire shape, Y1 correctly mirrors Pixel.
+- **L2CAP setup parameters** (MTU 512, Basic mode): identical.
+- **AVDTP signaling order** (Discover → SetConfig → Open → Start): both follow stock A2DP source flow.
+- **PASSTHROUGH ack latency**: both fast (≤ a few ms on Pixel, sub-ms-granularity on Y1 logcat).
+- **SDP — AVRCP TG fundamentals** (profile version 1.3, AVCTP version 1.2, SupportedFeatures 0x0001, no Browse PSM): exact match between Pixel-in-1.3 and Y1-post-V1/V2/V6/V7/V8.
+
+### Action items (ranked by likelihood-of-mattering × cost-to-attempt)
+
+1. **🔴 Unpair Y1 from Bolt; clear Bolt's BT cache; re-pair fresh.** Zero-cost user action. Tests the "Bolt cached Y1 SDP from older firmware" hypothesis directly. If post-clear, Bolt's first CMD to Y1 is `GetCapabilities` (mirroring Pixel-Bolt pattern), the cache hypothesis is confirmed and the metadata pane should engage. If not, hypothesis is refuted.
+
+2. **🟡 Add an audit: capture Y1's actual outbound wire bytes** via `btmon` on Y1 (`/system/xbin/btmon` or `adb shell btmon`) during a fresh Bolt session. This is the missing data we've been working around. Direct visibility into Y1's AVCTP packet_type, fragmentation pattern, and exact INTERIM/CHANGED byte content lets us compare to Pixel's wire shape byte-for-byte.
+
+3. **🟡 Investigate the GEA fragmentation hypothesis.** If Y1's wire GEA is >512 bytes and fragments, while Pixel's <512 bytes is single-packet, this is a real divergence. Possible mitigations: emit fewer attributes (revert E1 so unsupported drops); emit UTF-8 if currently UTF-16; pack attributes more densely. All non-trivial; requires the btmon capture from (2) to confirm fragmentation is happening.
+
+4. **🟢 Cosmetic SDP cleanup** (not load-bearing for Bolt's behaviour, but spec-clean): change Y1's AVRCP TG `ServiceName` from `"Advanced Audio "` (which duplicates the A2DP source name) to `"AV Remote Control Target "` (Pixel's value, AVRCP convention). Add `ProviderName` attribute matching Pixel. Strip `ServiceRecordState` if possible. None of these break anything; they make Y1 look more like a vanilla AVRCP TG.
+
+**Outcome.** Tier-1 lead identified: the discovery-skip pattern is the biggest single behavioural difference between Pixel-Bolt and Y1-Bolt, and it persists across M2/M3/M4 because it's CT-side state not TG-side wire delivery. Tier-2 lead: AVCTP fragmentation difference for GEA. Both are testable: (1) by user-side unpair/repair, (2) by adding `btmon` to the capture loop.
+
+**Confidence.** High on every dimension verified empirically (direct tshark/strings extraction from both captures). High on the discovery-skip being a real Bolt-side behaviour difference (n=1 each, but consistent across all 17 RegNotif retries in Y1's capture). Medium on the cause (cache vs SDP-attr-driven). Cannot disambiguate without (1) unpair/repair or (2) Y1 btmon capture.
+
+## Trace #48 (2026-05-17) — Trace #47 headline correction; mtkbt DOES support AVCTP fragmentation; reframing wire-vs-IPC distinction
+
+**Trace #47 headline retraction.** The "Bolt skips GetCapabilities query with Y1" observation only applies to the `dual-bolt-20260516-1453` capture, which is a **reconnect** to an existing bond. Multiple prior captures with confirmed unpair+repair (`dual-bolt-20260509-2249`, `dual-bolt-20260510-0953`, `dual-bolt-20260511-1339`, and several more) all show the standard fresh-pair flow:
+
+```
+Recv AVRCP indication: 506      ← AVRCP_CONNECT_IND (first inbound)
+Recv AVRCP indication: 505      ← initial config exchange
+Recv AVRCP indication: 519      ← GetCapabilities CMD (size:9)
+EXTADP_AVRCP: msg=522 size=30   ← Y1's GetCapabilities response (8 events)
+```
+
+The skip-GetCap pattern in `dual-bolt-20260516-1453` is normal AVRCP CT behaviour for reconnects to a known bond — Bolt remembers Y1's capability set from the prior session. **Not a divergence; not Y1-specific.** Cache hypothesis from Trace #47 retracted.
+
+**The metadata-pane regression exists in fresh-pair captures too** (May 9–11), so unpair+repair is not a fix and was never the underlying cause.
+
+**mtkbt DOES support AVCTP fragmentation.** Static analysis of `fcn.0xed50:0xee40–0xee66` confirms the AVCTP `packet_type` field gets computed correctly:
+
+| `r6` (offset) | `r8` (msg.len) vs `sb` (MTU) | `packet_type` |
+|---|---|---|
+| 0 | msg.len < MTU | **0 (Single)** |
+| 0 | msg.len ≥ MTU | **1 (Start)** |
+| > 0 | remaining > MTU | **2 (Continue)** |
+| > 0 | remaining ≤ MTU | **3 (End)** |
+
+MTU comes from `fcn.0xed16(chan, 1)` which returns `min(L2CAP_MTU, 0x200) - 10 = 502` bytes for AVRCP CONTROL channel responses. Above 502 wire bytes triggers fragmentation. The dispatcher `fcn.0xf0bc` tracks the per-channel fragment offset at `chan[0x314]` and increments it after each fragment via `adds r7, r0, r7; strh r7, [r4, 0x314]`. The AVCTP_EVENT 6 (TX complete) handler in `fcn.0xfb04` case-6 triggers the next-fragment send.
+
+So Y1 has fragmentation infrastructure. Whether it actually triggers depends on the actual GEA response size.
+
+**The `msg=540 size=644` is IPC buffer-pool allocation, not wire size.** Looking across captures from May 9 through May 16, every `msg=540` has the same `size=644` regardless of actual track metadata content. Compare to `msg=544` always `size=40` (RegNotif INTERIM, 14-byte wire) and `msg=520` always `size=214` (PASSTHROUGH ACK, ~12-byte wire). These are fixed per-msg-id IPC pool buffer sizes, not data length.
+
+**Estimating Y1's actual GEA wire size.** T4's emit sequence calls `PLT_get_element_attributes_rsp` once per attribute with strlen-based length. Per AVRCP 1.3 §6.6.1 Table 6.26, each attribute on the wire is `4-byte attr_id + 2-byte char_set + 2-byte length + value`. For a typical track with:
+
+- Title: ~25 chars (8 + 25 = 33 bytes)
+- Artist: ~20 chars (28 bytes)
+- Album: ~30 chars (38 bytes)
+- Media Number: ~3 chars (11 bytes)
+- Total Number: ~3 chars (11 bytes)
+- Genre: ~10 chars (18 bytes) or 0 if unpopulated (8 bytes with E1)
+- Playing Time: ~6 chars (14 bytes)
+
+That's ~155–165 bytes of attribute data plus 5 bytes AVRCP header (pdu_id, reserved, parameter_length, num_attribs) plus 9 bytes AV/C frame outer (ctype, subunit, opcode, companyID, transId) plus 3 bytes AVCTP header. Total wire: **~170–180 bytes for typical tracks**. Well under the 502-byte MTU threshold.
+
+**Conclusion: typical Y1 GEA fits in a single AVCTP packet, no fragmentation needed.** Same shape as Pixel. The "fragmentation" hypothesis from Trace #47 was based on misreading the IPC buffer size as wire size.
+
+**Where fragmentation WOULD trigger.** Only for tracks with very long fields — total wire approaching 502 bytes. With 256-byte slots for Title / Artist / Album / Genre in `y1-track-info` (4 × 256 = 1024 bytes max content), an extreme track could push wire >502 and trigger fragmentation. But for typical music data (Spotify-style strings of 20–40 chars), single-packet is the norm.
+
+**btmon unavailability on Y1.** Y1's Android build doesn't ship `/system/xbin/btmon`. The standard Android-stack btsnoop infrastructure isn't present either (Y1 uses BlueAngel/mtkbt, not Bluedroid/Fluoride). Alternatives:
+
+1. **External BT sniffer** (Frontline FTS, Ellisys, or open-source Ubertooth/Bluefruit/HackRF One). Gives clean wire-level visibility. Cost: hardware ($150–$3000) and capture-time setup.
+2. **Wireshark with `nrf_sniffer_for_802154` or a generic Bluetooth Classic sniffer** if available. Same idea, different hardware.
+3. **Add mtkbt debug instrumentation.** Patch `fcn.0xed50:0xee66`-region to write `r3` (the packet_type result) to a side-channel log file or via the existing fcn.0x4cc30 LogPrintf. Cost: ~10-line trampoline-style patch, doesn't require new hardware. Output reaches btlog (not logcat) but we already have btlog tooling. **This is the cheapest path to wire-fragment-type visibility.**
+4. **Patch a "wire-bytes log" into mtkbt's `fcn.0xae5e4`** (L2CAP_SendData entry) — log first 32 bytes of every outbound AVRCP frame to btlog. Slightly more work; gives complete frame visibility.
+5. **Capture btsnoop on the Bolt side** if Bolt's stack supports it. The Pixel snoop is exactly this — Pixel captures HCI inbound/outbound including the wire frames from the CT (Bolt). If Bolt exposes a btsnoop file (most cars don't), we'd have the data.
+
+**Can we implement fragmentation easily?** Yes/already-done:
+
+- mtkbt's `fcn.0xed50` (Path A header builder, used for `msg=540` GEA) and `fcn.0xef08` (Path B header builder, used for `msg=544` RegNotif INTERIM/CHANGED) both compute `packet_type` 0/1/2/3 correctly.
+- The dispatch loop in `fcn.0xf0bc` + `fcn.0xfb04` case-6 (TX-complete handler) drives multi-fragment sends.
+- The L2CAP layer (`fcn.0xae5e4 → fcn.0xae418 → fcn.0x7d204`) accepts the per-fragment send call.
+
+**Likely-not-needed for our metadata pane regression.** Typical GEA wire fits in single packet (<200 bytes vs 502 MTU). Bolt sees the same shape as Pixel.
+
+**What IS load-bearing.** Reframing where to look next:
+
+1. **Direct wire visibility.** Without seeing what Y1's mtkbt actually puts on the wire, we're guessing. The Tier-3 debug-log patch above (log `packet_type` from `fcn.0xed50` to btlog) is the cheapest way to confirm what Y1 emits per-frame.
+2. **The Bolt-side AVRCP state machine.** Bolt subscribes (RegNotif), receives INTERIM, but pane stays blank. Why? Without Bolt firmware to RE, the only data is the wire pattern that DOES work (Pixel) vs the one that doesn't (Y1). The wire-shape diff is small (Identifier, ~50-byte size diff). Either the metadata-pane code path on Bolt's side has a check we haven't identified, or Y1's wire bytes are subtly malformed in a way we can't see without btmon.
+3. **Hardware probe.** A USB BT sniffer on the Bolt-Y1 link captures wire bytes from outside both stacks. Gives a definitive byte-by-byte comparison.
+
+**Outcome.** Trace #47's discovery-skip and fragmentation hypotheses both retracted. The actual blocker remains "Bolt receives Y1's AVRCP responses but doesn't render the metadata pane, while it renders Pixel's." Without wire visibility on the Y1 side, the diagnosis is constrained to "something in Y1's wire bytes differs from Pixel's in a way Bolt cares about, but we can't see it." Cheapest mitigation: patch mtkbt to log per-fragment `packet_type` to btlog, confirm or rule out fragmentation in production.
+
+**Confidence.** High on fragmentation infrastructure existing in mtkbt (direct static analysis of `fcn.0xed50` packet_type logic). High on the IPC-vs-wire size distinction (consistent `size=644` across all msg=540 emits regardless of track content). Medium on "typical GEA fits in single packet" (computation from T4 emit logic but not verified against actual wire bytes).
+
+## Trace #49 (2026-05-17) — Trampoline-side `T4a=` wire-size instrumentation + `tools/avrcp-wire-trace.py`
+
+**Motivation.** User asked for `fcn.0xed50` mtkbt-side `packet_type` log instrumentation to confirm/refute the AVCTP fragmentation hypothesis from Trace #48. Implementing it directly in mtkbt requires ELF segment surgery (LOAD #1 extension via the libextavrcp_jni.so approach) which is significant work for what's ultimately a diagnostic. Instead, pivot to trampoline-side instrumentation that captures equivalent diagnostic value via the existing `DEBUG_NATIVE_LOG` infrastructure in `_trampolines.py`.
+
+**Equivalence argument.** mtkbt's `fcn.0xed50` computes `packet_type` purely as a function of `msg.len` vs MTU (502 bytes for AVRCP CONTROL channel):
+
+- `msg.len < 502` → `packet_type = 0` (Single AVCTP packet)
+- `msg.len ≥ 502` → `packet_type = 1` (Start fragment)
+
+Therefore observing the wire-size of every outbound GEA response is sufficient to predict mtkbt's packet_type without instrumenting mtkbt itself. The wire-size formula is closed-form from the trampoline-side data: `wire_size = 14 (AV/C outer + companyID + PDU + paramlen + num_attribs) + Σ(8 + strlen_i)` over the N attributes the request-driven T4 emit loop processes.
+
+**Implementation.**
+
+- `src/patches/_trampolines.py`: new `T4a=%08x` log emit in `t4_req_loop` (the request-driven emit path that fires per-attribute). Packed value: high 16 bits = `attr_id`, low 16 = `strlen`. The packing keeps the existing single-arg `_emit_native_log_u32` helper usable — no new wide-arg log helper needed. Emit fires per-attribute right before each `get_element_attributes_rsp` PLT call, log-helper's push/pop preserves the caller's r0-r3 PLT args.
+- Trade-off: removed `T6resp pos=%u` / `T6resp dur=%u` emits in GetPlayStatus to stay within the 4020-byte LOAD #1 padding budget. T6 fires on every CT poll (high-noise); the same play_status / position values surface in T9emit logs at lower frequency.
+- `tools/avrcp-wire-trace.py`: new logcat post-processor. Groups consecutive `Y1T : T4a=...` lines (each one a per-attribute emit) into a single GEA response summary. Computes total wire size from per-attribute strlens, predicts AVCTP `packet_type` (0 vs 1) by comparison to the 502-byte threshold, and surfaces non-T4 `Y1T :` lines verbatim for cross-correlation. Supports `--gea-only`, `--frag-only`, `--no-attr-breakdown` filters.
+- `tools/btlog-parse.py`: gains `--avrcp` preset that includes only the AVRCP / AVCTP-related mtkbt log surfaces (`avctpCB`, `[AVCTP]`, `avrcp:`, `[AVRCP]`, `transId`). Pairs cleanly with the logcat trace for end-to-end TX path visibility.
+
+**Operator workflow** for a Bolt-session capture, post-`apply.bash --debug`:
+
+```
+# concurrent capture
+adb logcat -s Y1T:* Y1Patch:* > bolt.logcat &
+adb shell btlog-dump > bolt.btlog            # or tools/dual-capture.sh
+
+# offline analysis
+tools/avrcp-wire-trace.py bolt.logcat        # GEA wire-size summaries
+tools/avrcp-wire-trace.py bolt.logcat --frag-only   # only responses > 502 B
+tools/btlog-parse.py --avrcp bolt.btlog      # mtkbt internal AVRCP/AVCTP log surface
+```
+
+**Output sample** (from a synthetic test feed at `/tmp/y1t-test.log`):
+
+```
+[05-17 10:00:00.010] GEA response: N=7 total_strlen=72 wire=142B AVCTP_payload=145B → fragments=1
+     attr=0x01 (Title   )  len=20
+     attr=0x02 (Artist  )  len=23
+     attr=0x03 (Album   )  len=20
+     attr=0x04 (MediaNum)  len=1
+     attr=0x05 (TotalNum)  len=2
+     attr=0x06 (Genre   )  len=0
+     attr=0x07 (PlayTime)  len=6
+[05-17 10:00:01.000] GEA response: N=7 total_strlen=798 wire=868B AVCTP_payload=871B → fragments=2 (PACKET_TYPE=START)
+     attr=0x01 (Title   )  len=256
+     ...
+```
+
+The first response (typical music metadata, 72 B total strlen) fits in a single AVCTP packet. The second (pathological 256-char fields) triggers fragmentation.
+
+**Build budgets.** Post-edit blob sizes (within the 4020-B LOAD #1 budget):
+
+| Build | Blob size | Free |
+|---|---|---|
+| Release (non-debug) | 3784 B | 236 B |
+| Debug (KOENSAYR_DEBUG=1) | 3976 B | 44 B |
+
+New `OUTPUT_DEBUG_MD5` for `libextavrcp_jni.so` debug build: `3900c80075ae051afc4ac48ade0c9bc4`. Release MD5 unchanged (`d803f42c973bf9539f4d03ccb658cab3`).
+
+**Outcome.** User can rebuild via `apply.bash --debug`, reflash, capture a Bolt session, and run `tools/avrcp-wire-trace.py` on the resulting logcat. The output directly answers the diagnostic question from Trace #48: under what real-world track-metadata loads does Y1's GEA exceed 502 wire bytes and trigger mtkbt fragmentation? If most responses fit single-packet (predicted from Pixel session's 110–125 B typical), AVCTP fragmentation is ruled out as the Bolt regression cause and we look elsewhere. If some / many fragment, Bolt's reassembler is suspect.
+
+**Confidence.** High that the trampoline-side wire-size measurement is equivalent to mtkbt-side packet_type observation (mtkbt's logic is a pure function of msg.len vs MTU per `fcn.0xed50:0xee40-0xee66`). High on the implementation working — round-tripped through the patcher in both release and debug modes, MD5-verified. Medium on whether the resulting data will identify the Bolt regression — that's an empirical question requiring the user-side hardware test.
+
+## Trace #50 (2026-05-17) — First post-M4 + debug-instrumented Bolt capture: M4 alone doesn't fix wire delivery for Path B
+
+**Capture.** `/work/logs/dual-bolt-20260517-0902/`, ~3 minutes. M4 + the new `Y1T : T4a=` instrumentation on device, fresh Bolt session.
+
+**`tools/avrcp-wire-trace.py` output — the diagnostic.** Three GEA responses surfaced:
+
+| Time | N | total_strlen | wire | Frags? | Content |
+|---|---|---|---|---|---|
+| 09:00:20 | 7 | 1 | 71 B | 1 | Empty-track placeholder (only MediaNum populated) |
+| 09:00:41 | 7 | 80 | 150 B | 1 | Title=35, Artist=11 (`Anti-Flag` w/ UTF-8 dash), Album=15, Genre=8, PlayTime=6 |
+| 09:01:44 | 7 | 58 | 128 B | 1 | Title=16, Artist=3 (`311`), Album=12, Genre=16, PlayTime=6 |
+
+**All three fit in single AVCTP packets** (wire < 502 B, no fragmentation triggered). The Pixel↔Bolt session's typical 110–125 B wire matches Y1's 128–150 B. **GEA fragmentation is not the issue.** Trace #48's secondary hypothesis is also refuted by direct measurement.
+
+The user-side observation — "only Anti-Flag and 311 displayed metadata" — matches exactly: those are the only two GEA responses with real metadata content. Bolt only queried GEA those two times.
+
+**Bolt's 3-second retry storm continues post-M4.** This is the headline finding. Inbound `MSG_ID_BT_AVRCP_CMD_FRAME_IND size:13` (RegNotif CMD) timestamps:
+
+```
+09:00:11.543 / .14.554 / .17.545 / .23.564 / .26.554 / .29.555 / .32.587 / .35.558 / .38.555 / .41.555
+```
+
+Exact ~3.0 s intervals (with 6 s gap at `.20` where a GEA query interrupted). This is the AVCTP V13 §3.3.5 response-timeout retry. **Bolt is not receiving any INTERIM response for `event=0x01 PLAYBACK_STATUS_CHANGED`.**
+
+Per logcat, Y1's T8 trampoline DOES emit an INTERIM for each retry (10 `Y1T : T8reg ev=01` entries match the 10 inbound `size:13` for ev=01). `EXTADP_AVRCP: msg=544` outbound IPC count is 77. mtkbt's `fcn.0xf0bc` Path B router log (`avrcp: sbunit type:9 id0…`) shows 81 hits in btlog. The trampolines fire correctly; mtkbt processes the IPC; mtkbt routes through Path B (the M4-patched fcn.0x6d0f0). **But Bolt's 3-second retry cadence proves none of the resulting wire frames reach Bolt.**
+
+**M4 alone doesn't fix Path B wire delivery.** There's another drop site downstream that affects Path B but not Path A.
+
+**Where the paths diverge.** Both eventually call `fcn.0xae5e4` (L2CAP_SendData), but with different second argument:
+
+| Path | Finalizer | r1 to `fcn.0xae5e4` | Source instruction |
+|---|---|---|---|
+| A (msg=540 GEA, M2/M3) | `fcn.0x6d048` → `fcn.0x6df20` (M3-NOPed) → `b.w fcn.0xae5e4` | `chan + 0xc0` | `fcn.0x6df20:0x6df3e add.w r1, r4, 0xc0` |
+| B (msg=544 RegNotif, M4) | `fcn.0x6d0f0` (M4-NOPed) → `b.w fcn.0xae5e4` | `chan + 0xd8` | `fcn.0x6d0f0:0x6d18e add.w r1, r4, 0xd8` |
+
+The two paths populate different regions of the chan struct (Path A → `chan[0xc0..]`, Path B → `chan[0xd8..]`). `fcn.0xae5e4` consumes whichever buffer was passed. **If the `chan+0xd8` Path B buffer has a structural bug (missing field, wrong byte at a critical position) that the `chan+0xc0` Path A buffer doesn't, `fcn.0xae5e4 → fcn.0xae418 → fcn.0x7d204` would silently reject it at one of Trace #48's L1 (CID lookup miss, no log) or L2 (packet-flag sanity mask, no log) gates — neither of which surface in btlog.**
+
+**Confirmed not the issue.** L3 (state-check, logs `L2CAP_SendData state:`) — zero hits in btlog. L5 (`l2cap: return no-connection state:`) — zero hits. L6 (`l2cap QueueTx fail`) — zero hits. AVCTP fragmentation (would require wire > 502 B) — empirically all 3 GEA responses fit single-packet, so fragmenter is dormant.
+
+**Confirmed by direct comparison.** The Pixel↔Bolt capture had Bolt's RegNotif re-subscribe arrive **20–22 ms after** each Pixel CHANGED emit (per Trace #45 / #46) — that's the normal CT post-CHANGED re-subscribe cadence. Y1↔Bolt post-M4 has Bolt's RegNotif retries arriving **3000 ms exactly** apart — that's the §3.3.5 retry timer. The two timing signatures unambiguously distinguish "subscription confirmed, normal flow" (20 ms) from "no INTERIM received, retry timer firing" (3000 ms).
+
+**Outcome.** Strong evidence that Path B (`fcn.0x6d0f0`-built AVRCP frames at `chan+0xd8`) has a structural bug between `fcn.0x6d0f0` exit and Bolt's wire-side parser. The bug is silent (no log hits) and affects only Path B (Path A works for some emits, evidenced by the 3 GEA wire deliveries). Most likely candidates:
+
+1. **`chan+0xd8` buffer setup mismatch in `fcn.0x6d0f0`.** Some byte that Path A populates correctly at `chan+0xc0` doesn't get written at `chan+0xd8`, causing `fcn.0x7d204`'s L1 / L2 silent gates to drop.
+2. **Distinct chan-struct sub-state for Path B.** Some flag or counter at `chan[0xd8..]` differs from `chan[0xc0..]` semantics, causing downstream rejection.
+3. **`fcn.0xae5e4` queue logic mishandles Path B's buffer location.** Specifically the `cbnz r0, 0xae69c` "packet already in list" dedup drop (r6=5) might fire for Path B's reused ptr pattern but not Path A's.
+
+**Next investigation.** Byte-level diff of `chan+0xc0..` (Path A) vs `chan+0xd8..` (Path B) build sequences in `fcn.0x6d048` and `fcn.0x6d0f0`. Any field Path A writes that Path B doesn't (or writes differently) is a candidate.
+
+**Confidence.** High on the data: the 3-second retry cadence + zero L-gate logs + Path A success vs Path B failure is unambiguous. High on the structural-bug hypothesis at the byte level — the two paths build different chan-struct regions and consume them via the same downstream chain, so any divergence in field population could explain the symptom. Medium on which specific field is the bug — requires the next round of disassembly diff.
+
+## Trace #51 (2026-05-17) — M5 attempt: flip Path B's `buffer[+0x08]` from 2 to 0 → regression on Bolt → reverted
+
+**Hypothesis.** Following Trace #50, byte-level diff of `fcn.0x6d048` (Path A, `chan+0xc0` region) vs `fcn.0x6d0f0` (Path B, `chan+0xd8` region) identified the cleanest single-byte divergence at frame-buffer offset `+0x08`: Path A writes 0 (`strb r3, [r4, 0xc8]` with r3=0 at `0x6d086`), Path B writes 2 (`strb r1, [r4, 0xe0]` with r1=2 at `0x6d138`). `fcn.0xae418`'s AVCTP single-packet builder reads buffer[+0x08] twice — first as a discriminator at `0xae43c` (`ldrb r3, [r1, 8]; cbnz r3, 0xae448`) selecting between two TID slots, second as the low nibble of AVCTP wire byte 0 at `0xae4f2`–`0xae4f4` (`ldrb r6, [r3, 8]; add r6, lr`). The M5 candidate patch: change Path B's `strb.w r1, [r4, 0xe0]` at `0x6d138` to `strb.w r2, [r4, 0xe0]` — a 1-byte edit at file offset `0x6d13b` (`10 → 20` in the strb.w T2 imm12 Rt-field encoding). After M5, Path B writes 0 at `+0x08`, matching Path A and routing through the alternate TID slot.
+
+**Hardware test.** Reflashed Y1 with M5-patched mtkbt (MD5 `52a4ab9f50d4f5293421324d1a5dcd84`), captured `dual-bolt-20260517-1009`. Observed:
+- **Hard regression.** No metadata pane updates on Bolt; button presses unresponsive on Bolt's UI even for NEXT/PREV. Music-app-side trampolines still fire (T8reg / T9emit / T5emit at session start), and PASSTHROUGH commands reach the music app (PlayerService.nextSong fires Y1-side), but Bolt's AVRCP session degrades to a state where neither metadata nor button echo lands.
+- **Indication 590 burst.** Pre-M5 captures had zero `JNI_AVRCP: Recv AVRCP indication : 590` ("AVRCP Unexpected message" — Bolt's wire-side rejection signature); M5 capture has 10 within ~60 s, paced with the post-INTERIM `EXTADP_AVRCP msg=544` retries. After the initial subscription, zero T8reg entries — Bolt never re-registers.
+
+**Re-disassembly of `fcn.0xae418`.** The discriminator at `0xae43c` reads via the pointer field `chan[0x10]` (loaded with `ldr r1, [r4, 0x10]` at `0xae43a`), and `fcn.0xae5e4` at `0xae60a` writes `chan[0x10] = r5` (the frame buffer pointer that the caller passed). So `[r1, 8]` at `0xae43c` resolves to the byte M5 modified. The byte-level mechanics of "this is the byte the discriminator reads" was correct.
+
+What M5 got wrong was the SEMANTICS. The discriminator selects between two distinct transaction-label slots:
+- `chan[0x28]` (offset `[r4, 0x14]` when `r4 = &chan[0x14]` is passed from `fcn.0xae5e4` / `fcn.0x6df20`) — AV/C command-response TID slot (AVRCP 1.3 §6.5: response shall echo the TID of the AV/C command).
+- `chan[0x29]` (offset `[r4, 0x15]`) — RegNotif subscription TID slot (AVRCP 1.3 §6.7.2: notification message shall carry the same TID as the original `RegisterNotification` command).
+
+Path B's stock `buffer[+0x08] = 2` was deliberate: it routes notification responses through the dedicated `chan[0x29]` slot per §6.7.2. By forcing Path B to discriminate as `0 → chan[0x28]`, M5 makes CHANGED responses go out with whatever TID the most recent AV/C command used — which post-INTERIM is whatever Bolt sent next (typically a follow-up `GetCapabilities` or `GetPlayStatus`). That TID does not match the RegNotif TID, so Bolt's AVRCP layer correctly rejects the frame and re-fires indication 590.
+
+**Outcome.** M5 reverted (commit `c5e93be`). OUTPUT_MD5 restored to `a10ca9636417a0ed71495dfa11b5eff0`. The Trace #50 hypothesis ("Path A wire-byte-0 shape works, Path B's doesn't") was wrong about the failure mechanism — Path A and Path B emit deliberately different wire-byte-0 shapes corresponding to different §6.5 / §6.7.2 TID semantics. The actual bug must be upstream, in how `chan[0x29]` (the slot M5 was bypassing) gets populated.
+
+**Process note.** M5 was committed and shipped to hardware-test without first confirming what `chan[0x10]` points to or what semantic distinction the two TID slots carry. Future M-series changes against `fcn.0xae418`'s discriminator must verify (a) which chan-struct slots the discriminator selects, (b) what semantics each slot carries, and (c) whether those semantics are spec-mandated, before flipping the discriminator.
+
+## Trace #52 (2026-05-17) — M6 attempt: lift `IPC[5]` into `packet[0xd]` → broke `msg=520 cmd_frame_ind_rsp` (different IPC semantics) → reverted
+
+**Hypothesis.** Continuing Trace #51's revised candidate list: the `chan[0x29]` slot (Path B's TID source per the `buffer[+0x08] = 2` discriminator) is set by Path B itself at `0x6d186-0x6d188` from `packet[0xd]`, where `packet` is mtkbt's internal outbound packet struct allocated by `fcn.0x11894`. Stock `fcn.0x11894` at file offsets `0x11924-0x11927` writes `movs r6, 0; strb r6, [r4, 0xd]` — `packet[0xd] = 0` unconditionally. Scanned `mtkbt`'s code path from alloc to Path B read (`fcn.0x11894 → fcn.0xf0bc → fcn.0xef08 → fcn.0x6d0f0`); no intermediate function overwrites `packet[0xd]`. So **every Path B wire frame emits with TID = 0** regardless of the originating AV/C command's transaction-label.
+
+This explains why `msg=540` GEA responses landed in Trace #50 (Bolt sent GEA with TID=0, accidentally matching) but `msg=544` RegNotif INTERIM didn't (Bolt's RegNotif used non-zero TID, our TID=0 response failed the §6.7.2 echo check, AVCTP §3.3.5 retry timer fired forever).
+
+Sampled five `libextavrcp.so` response builders (`btmtk_avrcp_send_reg_notievent_track_changed_rsp`, `..._playback_rsp`, `..._rsp`, `..._get_capabilities_rsp`, `..._get_element_attributes_rsp`); each writes `ipc[5] = conn[0x11]` (the libextavrcp transId slot — updated by the inbound-RX path when an AV/C command arrives). The hypothesis: replace mtkbt's `movs r6, 0` at `0x11924` with `ldrb r6, [r1, 5]` (`00 26` → `4e 79`), where r1 holds the IPC payload pointer (loaded at `0x11910` `ldr r1, [arg_28h]` and not modified through `0x11923`). The unchanged `strb r6, [r4, 0xd]` at `0x11926` then writes `packet[0xd] = ipc[5] = transId`, propagating to `chan[0x29]` and then to wire byte 0 = `(transId << 4) + 4 + 2` per §6.7.2.
+
+**Hardware test.** Reflashed Y1 with M6-patched mtkbt (MD5 `3c814fb2715d7919c38b04126e1ec3e2`). Captured `dual-bolt-20260517-1126` (Bolt) and `dual-sonos-20260517-1130` (Sonos). Observed:
+
+| Capture | Inbound CMD_FRAME_IND sizes | Outbound msg=544 | Indication 590 |
+|---|---|---|---|
+| Bolt pre-M6 (`...0902`) | 45× size:13 (RegNotif), 16× size:3 (PASSTHROUGH), 3× size:45 (GEA), 1× size:9, 1× size:11 | 77 | 0 |
+| Bolt post-M6 (`...1126`) | **0× size:13** (no RegNotif), 26× size:3 (PASSTHROUGH), 1× size:45 (GEA), 1× size:9 | 15 | 0 |
+| Sonos last-working (`...1441`) | 30× size:13 (RegNotif), 8× size:45 (GEA), 8× size:3 | 60 | 0 |
+| Sonos post-M6 (`...1130`) | **0× size:13** (no RegNotif), 0× size:45 (no GEA), 6× size:3 | 3 | 0 |
+
+**Both CTs stopped sending `RegisterNotification` CMDs entirely.** Different from M5's failure mode (which had Bolt rejecting frames after subscription, indication 590 burst). M6's failure mode is "CT silently abandons AVRCP subscription/metadata flow during or before initial handshake." No L2CAP-layer reject signature, no AVRCP-layer indication-590 reject — the CT just doesn't proceed.
+
+**Root cause: `cmd_frame_ind_rsp` doesn't follow the `ipc[5] = transId` template.** Re-disassembled `sym.btmtk_avrcp_send_cmd_frame_ind_rsp` at `0x1cbc`:
+
+```
+0x1cc2  mov lr, r2                 ; lr = r2 = arg3
+0x1cf8  strb.w lr, [sp, #0x9]      ; ipc[5] = lr = arg3
+```
+
+`cmd_frame_ind_rsp(arg1, arg2, arg3, arg4, ...)` writes `ipc[5] = arg3`, where arg3 is the caller-supplied ctype-like byte (mirroring the convention of other `*_rsp` functions where arg3 is the AV/C ctype, not the transId). It does NOT do `ldrb r3, [conn, #0x11]` — it does NOT touch `conn[0x11]`. So for `msg=520` (cmd_frame_ind_rsp), `ipc[5]` carries the response ctype, not the transId.
+
+Pre-M6: mtkbt's `packet[0xd] = 0` → wire TID = 0 for all msg_ids → Bolt's GEA-with-TID-0 + cmd_frame_ind_rsp-with-TID-0 both accidentally matched.
+
+Post-M6: mtkbt's `packet[0xd] = ipc[5]` → wire TID = transId for the five response builders that follow that template, BUT wire TID = ctype-byte (0x0F / 0x0D / 0x0C / etc.) for `cmd_frame_ind_rsp`. The CT's AVRCP layer sees `msg=520` responses with malformed TIDs (TID = ctype low nibble) and stops proceeding with the AVRCP handshake. Both Bolt and Sonos exhibit the same "abandon AVRCP" symptom because both rely on the early-session `cmd_frame_ind_rsp` exchange to confirm AVRCP transaction routing.
+
+**Outcome.** M6 reverted (commit reverting `6d73620`). OUTPUT_MD5 restored to `a10ca9636417a0ed71495dfa11b5eff0`. The "patch mtkbt's allocator universally" approach has too broad a blast radius — `libextavrcp.so` response builders have heterogeneous `ipc[5]` semantics, and `cmd_frame_ind_rsp` is the spoiler.
+
+**Lesson + revised approach.** Patching `fcn.0x11894`'s `packet[0xd]` source affects ALL msg_ids that traverse Path B (msg > 6 = all common AVRCP responses). For the M6 mechanic to work, every Path-B-bound msg_id's IPC payload must carry the transId at the same byte offset. The five sampled response builders do (write `ipc[5] = conn[0x11]`); `cmd_frame_ind_rsp` doesn't (writes `ipc[5] = arg3` which is the response ctype). Future TID-routing fixes need to either:
+
+1. **Patch `libextavrcp.so`'s `cmd_frame_ind_rsp`** to also set `ipc[5] = conn[0x11]`. Requires finding 6 bytes of space in the 124-byte function (`push {r4..r7, lr}; sub sp, 0xe4; ...`) — challenging without restructuring. Could overlay into the stack-canary epilogue if a free register is available.
+
+2. **Patch `mtkbt`'s Path B response builder `fcn.0x6d0f0`** to dereference `packet[0x10]` (the IPC data pointer, set via `fcn.0x11894`'s memcpy at `0x11934`) and read byte 5 there: `ldr rtmp, [r5, 0x10]; ldrb r0, [rtmp, 5]; strb.w r0, [r4, 0x29]`. Same byte-source issue applies for `cmd_frame_ind_rsp` (ipc[5] is ctype, not transId), so no improvement over M6.
+
+3. **Patch only specific msg_ids.** Insert a `cmp r6, 0x220` (or similar) check in `fcn.0x11894` before the `packet[0xd]` write, so only the RegNotif IPC msg=544 gets the conditional transId-lift. Requires a code-cave trampoline since the inline path doesn't have space for a conditional.
+
+4. **Patch `libextavrcp.so` to set `conn[0x11]` from the right TID at the right time** — i.e., before any outbound response, ensure `conn[0x11]` holds the TID of the AVRCP command that's being responded to. This is already what stock does for response builders that read `conn[0x11]`; `cmd_frame_ind_rsp` doesn't, so we'd need a different mechanism for it.
+
+5. **Patch the inbound-RX path in `mtkbt`** to write the inbound TID into both `chan[0x28]` AND `chan[0x29]` (i.e., both TID slots from §6.5 and §6.7.2 point to the same value, the current inbound CMD's TID). For pure command-response exchanges (`msg=520 cmd_frame_ind_rsp`, `msg=540 GEA`, `msg=522 GetCaps`), this is correct per §6.5. For `msg=544 RegNotif INTERIM/CHANGED` it requires `chan[0x29]` to be sticky between the RegNotif CMD arrival and the subsequent CHANGED emits (which can fire arbitrarily later from T9 / T5 trampolines). Whether stock `chan[0x29]` is sticky or gets overwritten by subsequent inbound CMDs needs RE.
+
+Option (5) looks cleanest if `chan[0x29]` is sticky. Option (3) is targeted but requires a code cave. Options (1)/(2)/(4) have their own RE costs. Each option needs verification before committing.
+
+**Confidence.** High that M6's universal-allocator approach is wrong — both Bolt and Sonos went from "subscribing" to "not subscribing" post-M6, which matches the cmd_frame_ind_rsp / TID-mismatch failure mode. High on the cmd_frame_ind_rsp RE (the `mov lr, r2; strb.w lr, [sp+9]` chain is unambiguous). Medium on which of the five options to pursue next — option (5) is the most ambitious but most spec-aligned.
+
+**Wire-side transId evidence from existing `btlog.bin` captures.** mtkbt's xlog stream logs inbound transId via the `[AVRCP] transId:%d` format string (caller `fcn.00051a20` reads from `event[5]` per Trace #46 lines 1117-1123). Parsing the existing dual-capture btlogs with `tools/btlog-parse.py --avrcp` gives a per-CT TID histogram:
+
+| Capture | TID histogram (count × TID) | Distinct TIDs |
+|---|---|---|
+| Bolt post-M4 pre-M5 (`dual-bolt-20260517-0902`) | 2×9, 1×{7, 6, 15, 14, 13, 12, 10, 1, 0} | 10 (0, 1, 6, 7, 9, 10, 12, 13, 14, 15) |
+| Bolt post-M6 (`dual-bolt-20260517-1126`) | 2×{8, 7, 5, 1}, 1×{4, 3, 2, 15, 10} | 9 (1, 2, 3, 4, 5, 7, 8, 10, 15) |
+| Sonos last-working (`dual-sonos-20260516-1441`) | 6×0, 1×02 | 1 (0) |
+
+**Bolt cycles transIds across the full 0-15 range** (likely every AV/C command increments the previous TID modulo 16, the conventional AVCTP §6.1 transaction-label rotation). **Sonos uses transId=0 for essentially all commands**. This explains the symptom asymmetry without needing a new HCI snoop:
+
+- Stock `mtkbt` emits Path B wire frames with TID = 0 (because `packet[0xd]` is constant 0). Sonos's TID=0-only CMDs accidentally match, so Sonos works pre-M6. Bolt's cycled CMDs match only when Bolt happens to be at TID=0 — empirically ~1/16 of the time, plus the §6.7.2 wrinkle that a CHANGED on a subscription that was opened at TID=N never matches TID=0 unless N=0.
+- Post-M5 (`buffer[+0x08] = 2 → 0`, forcing Path B to read `chan[0x28]` instead of `chan[0x29]`): the §6.5 slot `chan[0x28]` holds the LATEST inbound AV/C CMD's TID, so the FIRST Bolt RegNotif INTERIM matches (the RegNotif is what's "latest"), but any subsequent CHANGED emit picks up whatever non-RegNotif CMD came in after (GetCaps, GEA, etc.), TID mismatches, Bolt sends indication 590 ("AVRCP Unexpected message"). The 10× indication 590 burst in `dual-bolt-20260517-1009` is the wire-side signature.
+- Post-M6 (universal `packet[0xd] = ipc[5]`): for response builders that follow the `ipc[5] = conn[0x11] = transId` template, the wire TID becomes the correct §6.5 / §6.7.2 echo. But for `cmd_frame_ind_rsp` (msg=520) which uses `ipc[5] = arg3 = ctype`, the wire TID becomes the response ctype byte (0x0c / 0x0d / 0x0f / etc.). Both Bolt and Sonos's AVRCP layer sees garbage-TIDs on `msg=520` (Sonos's stock TID=0 protection no longer holds because we're actively writing ctype as TID instead of leaving the byte zero), abandons the handshake. Zero RegNotif CMDs post-M6 on both CTs is the abandonment signature.
+
+So the TID-mismatch hypothesis is confirmed quantitatively without new captures. The "Sonos works, Bolt doesn't" pre-M6 asymmetry is purely the TID-distribution difference. The remaining open question is the SCOPE of any fix: it must change `msg=544` (and ideally `msg=540` GEA + `msg=522` GetCaps) to echo the inbound TID, WITHOUT changing `msg=520` (which already works for Sonos and would re-break post-M6).
+
+**Updated option ranking.** Given the btlog evidence:
+
+- Option (3) — patch `fcn.0x11894` to conditional-lift only for msg_id ∈ {544, 540, 522} — is the most targeted but needs a code-cave trampoline (the inline path has no room for a `cmp r6, …; beq` conditional).
+- Option (5) — write inbound TID to chan[0x28] + chan[0x29] in mtkbt's AVCTP RX — depends on chan[0x29] being sticky (only written on RegNotif CMDs, not every CMD). RE on `fcn.0x7d204` (AVCTP RX entry) is the prerequisite.
+- Option (1) — patch `cmd_frame_ind_rsp` to also `ipc[5] = conn[0x11]` — would change what mtkbt receives at `ipc[5]` for msg=520, breaking mtkbt's interpretation of the response ctype. Unless we can ALSO patch mtkbt's IPC RX for msg=520 to read ctype from a different IPC byte. Two-binary patch coordination needed.
+
+Best next step: examine `fcn.0x7d204` / the AVCTP RX path to see whether stock writes the inbound TID anywhere on the chan struct, and if so where. If chan[0x29] is already written from inbound RX (just overwritten by Path B at `0x6d188`), the fix collapses to a single NOP at `0x6d188-0x6d18b` (4 bytes `84 f8 29 00` → 4 NOPs).
+
+## Trace #53 (2026-05-17) — RE corrections: AVCTP RX path located, chan+0x39 confirmed as the shared TID slot
+
+**Mistake correction (from Trace #52 closing message).** `fcn.0x7d204` is NOT the AVCTP RX entry — its disassembly leads through the format string `"L2CAP_SendData state:%d return:%d"`. It's the L2CAP TX (downward send) path. The actual AVCTP RX entry is `fcn.0xfb04` (the avctpCB callback registered with the AVCTP layer), with its `[AVRCP] avctpCB AVCTP_EVENT:%d` log marker.
+
+**True inbound AVRCP CMD path mapped.** Working back from the wrappers `fcn.0xed04` (Path A) and `fcn.0xed0a` (Path B):
+
+```
+AVCTP layer
+  → fcn.0xfb04 (avctpCB)                 ; r3=evt: 2=RECV, 3=CONN_STATE, 4=…
+  → fcn.0x518ac (AVCTP packet dispatcher) ; (case 20 per prior summary)
+  → fcn.0x11374 ([AVRCP] transId logger)
+  → fcn.0xed0a (+8 trampoline)
+  → fcn.0x6d0f0 (Path B)                  ; writes chan[+0x29]
+  → fcn.0xae5e4 → fcn.0xae418             ; wire-frame builder
+```
+
+The TID is latched twice: first by `fcn.0x11374` at file offset `0x11436` (`strb.w sl, [r4, 0xba9]` where `sl = arg2 = inbound transId`) into the per-channel stash struct at `chan+0xba9` (stash struct base `chan+0xb9c`, offset `+0xd`); then a few instructions later passed as the `r1` arg to `fcn.0xed0a` and propagated through Path B's `ldrb r0, [r5, 0xd]; strb.w r0, [r4, 0x29]` at `0x6d186-0x6d18b` (where `r5 = stash`, `r4 = chan+0x10`).
+
+**Path B's r4 is `chan+0x10` for BOTH inbound and outbound** (initial RE confusion about an 8-byte split was wrong — the `+8` wrapper in `fcn.0xed0a` is the only addition; outbound's chain `fcn.0x11894 (passes chan+8) → fcn.0xf0bc (r5 = r4+8) → Path B (r0 = r5 = chan+0x10)` yields the same `r4`). So the strb-target `[r4, 0x29]` resolves to `chan+0x39` in BOTH paths. The wire-frame builder `fcn.0xae418` reads `[r4, 0x15]` with its `r4 = chan+0x24`, also `chan+0x39`. One physical slot, written by both paths, read by the builder.
+
+**Confirmation of the original Trace #52 hypothesis.** Stock mtkbt's inbound RX writes the AV/C command's transId to `chan+0x39` via Path B at `0x6d188`. The outbound IPC chain then ALSO calls Path B (because RegNotif INTERIM/CHANGED's IPC msg id ≤ 6 routes through the `fcn.0xf0bc → fcn.0xef08 → fcn.0x6d0f0` Path B branch — `cbz r3, 0xf186` at `0xf138` with `r3 = pkt[9]`, where `pkt[9] = (alloc_msg_type > 6) ? 1 : 0` set by `fcn.0x11894` at `0x11912`). The outbound packet has `pkt[0xd] = 0` (set unconditionally by allocator at `0x11924`), so the second Path B call writes `chan+0x39 = 0`, clobbering the inbound-latched TID before `fcn.0xae418` reads it. Wire TID = 0 for every outbound Path B response.
+
+**Why the M4 patch's "msg=544" naming is correct despite the IPC discriminator.** The `cmp r6, 6` at `0x11906` compares `r6 = arg2` (the IPC layer's small msg type, 1..N) — not the AVRCP wire-format PDU identifier (0x208 = `msg=520 cmd_frame_ind`, 0x21C = `msg=540 GEA`, 0x220 = `msg=544 RegNotif`). The allocator's `r6` is the internal IPC message type, and short single-PDU responses (cmd_frame_ind_rsp, RegNotif INTERIM, GetCaps) all use a small IPC type that sets `pkt[9] = 0`, routing them to Path B. Fragmented responses (GEA) use a larger IPC type, setting `pkt[9] = 1` and routing through Path A. So all the Path B-bound msg_ids (520, 522, 544, possibly others) share the same `pkt[0xd] = 0` clobber bug.
+
+**Why NOP-at-0x6d188 doesn't work.** A flat `84 f8 29 00 → 00 bf 00 bf` NOP at `0x6d188-0x6d18b` (4 bytes) would prevent the outbound clobber, but the same instruction is also the only path that latches the inbound TID. NOPping it kills the inbound side too, leaving `chan+0x39` permanently at whatever value preceded the AVRCP session start (likely 0). Net effect: same as stock (wire TID = 0).
+
+**Discriminator candidates within Path B (no msg-id reach).** Path B's `r5` is the inbound stash (`chan+0xb9c`) or the outbound IPC packet (from `fcn.0x11894`'s free-list `fcn.0x6ce6a` pop). Bytes that DIFFER reliably between the two:
+
+| Byte | Outbound IPC packet | Inbound stash struct |
+|---|---|---|
+| `[r5, 8]` | `1` (allocator `strb r2, [r4, 8]` with `r2=1` at `0x11908`) | LSB of `pkt_ptr` (heap-aligned, typically `0`) |
+| `[r5, 9]` | `0` or `1` (msg-type discriminator) | byte 1 of `pkt_ptr` (random-ish) |
+| `[r5, 0xb]` | `arg2 = IPC msg type` (small int, 1..N) | byte 3 of `pkt_ptr` (random-ish) |
+| `[r5, 0xc]` | unwritten (whatever's in the popped buffer) | unwritten |
+| `[r5, 0x14]` | size (always set by allocator's `strh.w sb, [r4, 0x14]` at `0x11930`, capped at 0x200) | bytes from `arg_44h - 1 + ?` (random) |
+
+`pkt[8] == 1` is the cleanest "this came from the allocator" signal — and since the byte's already loaded into `r2` at `0x6d180` (`ldr r2, [r5, 8]` for the unrelated `str.w r2, [r4, 0xec]` at `0x6d182`), a UXTB + CMP + IT/STRB sequence could discriminate without reloading. But it expands to 10 bytes vs the original 6 — no in-place fit.
+
+**Updated fix design space.**
+
+1. **Code-cave trampoline inside `fcn.0x6d0f0`.** Replace `0x6d186-0x6d18b` (6 bytes) with `b.w <cave>` (4 bytes) + `nop` (2 bytes). The cave does `ldrb r0, [r5, 0xd]; uxtb r2, r2; cmp r2, 1; bne do_write; b.w 0x6d18c; do_write: strb.w r0, [r4, 0x29]; b.w 0x6d18c`. Skips the strb on outbound (preserves the inbound-latched chan+0x39); keeps the strb on inbound. Net effect: outbound responses inherit whatever TID the LAST inbound CMD landed at chan+0x39, satisfying §6.5 echo for command-response exchanges and §6.7.2 echo for RegNotif when the subscription's CMD is the most recent inbound. Requires identifying ~24 bytes of code-cave space in mtkbt.
+
+2. **Patch `libextavrcp.so cmd_frame_ind_rsp` to set `ipc[5] = conn[0x11]`** (Option 1 from Trace #52). 6 bytes needed in a 124-byte function. Then the M6 universal allocator-side patch works for all msg_ids including `msg=520`. Total: 2-byte mtkbt change + 6-byte libextavrcp.so change.
+
+3. **Per-msg-id conditional in `fcn.0x11894`** (Option 3 from Trace #52). Insert `cmp r6, <RegNotif_internal_msg_type>; beq do_lift; movs r6, 0; b cont; do_lift: ldrb r6, [r1, 5]; cont: strb r6, [r4, 0xd]`. Same code-cave requirement as (1). Less spec-aligned than (1) — leaves GEA + GetCaps still emitting TID=0.
+
+(1) is structurally cleanest if a code-cave exists in mtkbt. (2) is a two-binary change but doesn't need code-caves — could be done with byte-level overlay if 6 bytes can be found in `cmd_frame_ind_rsp`'s prologue/epilogue. Pending user decision on which to pursue.
+
+**Confidence.** High on the call-chain mapping (verified by axt cross-references in radare2). High on `chan+0x39` being the single shared slot (re-traced through both wrapper paths with consistent r4 = chan+0x10 in Path B). Medium on (1)'s code-cave availability — needs an inventory pass on mtkbt. High on (2)'s feasibility given the prior libextavrcp.so RE done for E1.
+
+## Trace #54 (2026-05-17) — M5 landed: code-cave trampoline in mtkbt LOAD #1 padding
+
+**Pursued option (2) from Trace #53** (renamed to fit the M-series naming convention in `patch_mtkbt.py`; superseded the option-(1) "patch `cmd_frame_ind_rsp`" approach which turned out to need coordinated 2-binary IPC-layout changes plus mtkbt-side ctype-source RE for `msg=520`). Single-binary mtkbt fix using the same ELF segment-extension trick `patch_libextavrcp_jni.py` already uses for its trampoline blob.
+
+**Cave space inventory.** mtkbt's LOAD #1 ends at file/vaddr `0xf366c` (`.ARM.extab` end). The next LOAD segment (RW data) starts at file `0xf3d40` / vaddr `0xf4d40` (page-aligned). File bytes `0xf366c..0xf3d40` and vaddr bytes `0xf366c..0xf4d40` are page-padding zeros; verified all-zero in the stock binary via `python3` byte scan. 1748 bytes of file padding, 5332 bytes of vaddr gap before LOAD #2 — plenty of room for a 16-byte trampoline.
+
+**Cave placement.** vaddr `0xf3680` (16-byte aligned, 20 bytes past `0xf366c` for cleanliness). Trampoline body 16 bytes; extended LOAD #1 filesz/memsz = `0xf3690`. Net file growth: 36 bytes (20-byte alignment padding + 16-byte cave content), but the original 20 padding bytes were already zero in the stock file — only the 16 cave bytes flip from `00 00 …` to the trampoline.
+
+**Trampoline design.**
+
+```
+0xf3680  68 7b           ldrb r0, [r5, 0xd]        ; original 1st insn — TID byte
+0xf3682  2a 7a           ldrb r2, [r5, 8]           ; discriminator load
+0xf3684  01 2a           cmp r2, 1                  ; outbound = 1 (allocator), inbound = 0xea+ (LSB of resolved literal)
+0xf3686  01 d0           beq 0xf368c                ; skip strb on outbound
+0xf3688  84 f8 29 00     strb.w r0, [r4, 0x29]      ; original 2nd insn (inbound only — latch transId at chan+0x39)
+0xf368c  79 f7 7e bd     b.w 0x6d18c                ; return into Path B's post-strb body
+```
+
+**Call site rewrite** at `0x6d186` (6 bytes):
+
+```
+before  68 7b 84 f8 29 00     ldrb r0, [r5, 0xd]; strb.w r0, [r4, 0x29]
+after   86 f0 7b ba 00 bf     b.w 0xf3680; nop
+```
+
+**Discriminator robustness verified via static literal resolution.** Inbound stash struct's `+8` field is set at `fcn.0x11374:0x11458 str.w r6, [r4, 0xba4]` where `r6 = ip + (chnl_num << 11)`. `ip` resolves from the literal at `0x114a0` (value `0xeaba8`) added to PC at `fcn.0x11374:0x1143e add ip, pc` (PC + 4 = `0x11442`): static `ip = 0xfbfea`. At runtime, `ip + load_base` (page-aligned load_base) preserves LSB `0xea`. For `chnl_num` ∈ {0, 1}: stash[+8] LSB is constant `0xea` ≠ 1. Outbound allocator path writes `packet[8] = 1` unconditionally at `fcn.0x11894:0x11908`. `cmp r2, 1` cleanly separates the two; no value collision possible.
+
+**ELF surgery.** LOAD #1 phdr at file `0x74` (the 3rd phdr after PHDR + INTERP). filesz at `+16` = file `0x84`; memsz at `+20` = file `0x88`. Both bumped from `0xf366c` to `0xf3690`. No section headers touched (Linux kernel ELF loader uses program headers exclusively for segment mapping; the section table is for static linker / objdump consumption only).
+
+**Patch list** (4 entries appended to `patch_mtkbt.py`):
+
+1. `[M5]` call-site rewrite at `0x6d186` (6 bytes: ldrb+strb → b.w cave + nop).
+2. `[M5-CAVE]` trampoline blob at `0xf3680` (16 bytes: replace zero padding with the conditional-store body).
+3. `[M5-FILESZ]` LOAD #1 filesz at `0x84` (`0xf366c → 0xf3690`).
+4. `[M5-MEMSZ]` LOAD #1 memsz at `0x88` (`0xf366c → 0xf3690`).
+
+OUTPUT_MD5: `a10ca9636417a0ed71495dfa11b5eff0` → `dc01a7c1337ad2dc6573819bdc22834d`.
+
+**Pre-flash verification done:**
+
+1. `python3 patch_mtkbt.py /work/v3.0.2/.../mtkbt` → output MD5 matches expected. All 18 patch sites verified (M1-M5).
+2. Re-run patcher on the patched output → idempotency-detected, no-op exit 0.
+3. radare2 disassembles cave correctly at `0xf3680` (6 instructions, return b.w resolves to `0x6d18c`) and the call site at `0x6d186` shows `b.w 0xf3680` with bidirectional xref. r2 reports proper CODE XREFs between the two regions.
+4. Byte-level verification of patched output: `0x6d186 = 86 f0 7b ba 00 bf` (correct b.w + nop); `0xf3680 = 68 7b 2a 7a 01 2a 01 d0 84 f8 29 00 79 f7 7e bd` (correct cave content); phdr filesz/memsz both `0xf3690`.
+
+**Risk assessment.** M5 lands without flashing in this session; the user will flash and capture from the separate flash machine. Known risk surface:
+
+- **Discriminator collision** (`packet[8] == 1` for an inbound stash) — ruled out by static literal resolution; LSB is constant `0xea` across `chnl_num` ∈ {0, 1}.
+- **Path B path coverage** — M5 affects every Path B call site (both inbound and outbound). The inbound case unchanged (strb still executes). The outbound case now skips the strb. No other code paths read `[r4, 0x29]` from `r4 = chan + 0x10` post-Path-B besides `fcn.0xae418`'s wire-frame builder, so the only downstream consumer benefits from the fix.
+- **Subsequent inbound CMD overwrites** — `chan+0x39` is per-channel and gets re-latched on the next inbound CMD. For RegNotif subscriptions, the §6.7.2 stickiness depends on the RegNotif being the most recent CMD before the corresponding INTERIM/CHANGED is built. Wire-side timing (mtkbt's IPC dispatcher is single-threaded; responses are built in IPC msg arrival order) makes intervening CMDs unlikely between a RegNotif and its INTERIM. For T9/T5 edge-driven CHANGED emits hours after the subscription, the most recent CMD's TID is used — which is the §6.5 echo target anyway, so it works for command-response exchanges too. Both Sonos (TID=0 always) and Bolt (TID 0-15 rotation) should land correctly.
+- **MD5 drift on idempotent re-runs** — `apply.bash`'s `patch_in_place_bytes` helper detects "already patched" and skips the write-back. Verified by re-running the patcher on the patched output.
+
+Pending: hardware flash + dual-capture from Bolt and Sonos to confirm. If the trampoline misfires, revert is a single-commit revert; the patch set is contained.
+
+## Trace #55 (2026-05-17) — M5 post-flash: TID echo correct but button-handling regression surfaces on Bolt
+
+**Post-M5 capture** (`dual-bolt-20260517-1254`, mtkbt MD5 `dc01a7c1...`): zero indication-590 rejects, no AVCTP retry storm, RegNotif INTERIM-CHANGED handshake completes for the initial track and one mid-session stable track (Bad Religion → 12:52:53 GEA, Paramore → 12:54:26 GEA). The transId echo from M5 lands clean — Bolt accepts the wire frames at the protocol layer.
+
+User-reported regression in the same capture: Bolt's PAUSE button on its stateful UI sometimes "toggles to a Play icon (as if it paused) but did not pause. Hit a couple more times and it eventually resumes playback but does not toggle back to pause." Logcat trace at `12:53:05.262` (the first reported PAUSE press):
+
+```
+12:53:05.262  MMI_AVRCP    Receive a Avrcpkey:70 (= 0x46 PAUSE, from Bolt)         DOWN
+12:53:05.273  MMI_AVRCP    Receive a Avrcpkey:70                                    UP
+12:53:05.288  Y1Patch      BaseActivity.dispatchKeyEvent entry                      DOWN
+12:53:05.292  Y1Patch      BaseActivity.dispatchKeyEvent entry                      UP
+12:53:05.293  Y1Patch      PlayerService.playOrPause() entry                        ← TOGGLE called
+12:53:05.296  Y1Patch      PlayerService.pause(IZ) entry                            ← toggle's inner branch picked pause
+12:53:05.297  Y1Patch      PlaybackStateBridge.onPlayValue entry  newVal=3 reason=3
+12:53:05.298  Y1Patch      TrackInfoWriter.setPlayStatus entry  sPS.from=1  sPS.to=2
+```
+
+`PlayControllerReceiver.onReceive` does NOT fire in the same window. Patch E's discrete `cond_pause_strict` arm (`KEYCODE_MEDIA_PAUSE (0x7f) → pause(0x12, true)`) is in `PlayControllerReceiver` and never gets the chance to handle this press.
+
+**Where the discrete PAUSE keycode is lost.** Tracing through the input stack:
+
+1. `libextavrcp_jni.so`'s `avrcp_input_sendkey` (sym at `0x76b4`) has a keymap table at vaddr `0xccec` (file `0xbcec` in `.data.rel.ro.local`); each 8-byte entry holds an AV/C PASSTHROUGH op_code at `+4` and a Linux keycode at `+6` (uint16). Entry 2 maps `0x46 PAUSE` → Linux `KEY_PAUSECD` (`201`). `libextavrcp_jni.so` `write()`s that to `/dev/input/event4` (the AVRCP uinput device opened in `avrcp_input_init`, name `"AVRCP"`, registered with `BUS_BLUETOOTH`).
+
+2. Android's input dispatcher reads the Linux keycode and consults `/system/usr/keylayout/AVRCP.kl` (selected because the device name matches). The stock AOSP `AVRCP.kl` (MD5 `366670c4f944150bd657d9377839463a`, identical across firmware 3.0.2 and 3.0.7) has:
+
+   ```
+   key 200   MEDIA_PLAY          WAKE      ← KEY_PLAYCD  → 126 KEYCODE_MEDIA_PLAY
+   key 201   MEDIA_PLAY_PAUSE    WAKE      ← KEY_PAUSECD → 85  KEYCODE_MEDIA_PLAY_PAUSE
+   key 166   MEDIA_STOP          WAKE
+   key 163   MEDIA_NEXT          WAKE
+   key 165   MEDIA_PREVIOUS      WAKE
+   key 168   MEDIA_REWIND        WAKE
+   key 208   MEDIA_FAST_FORWARD  WAKE
+   ```
+
+   The file has the standard AOSP copyright header — this is stock AOSP content, not a Y1 vendor remap. The `key 201 MEDIA_PLAY_PAUSE` mapping predates Android's discrete `KEYCODE_MEDIA_PAUSE` (`0x7f` = 127, post-Android-3.0 Honeycomb addition) and coalesces both discrete PASSTHROUGH commands into the toggle key. **No Linux keycode in the stock AVRCP.kl maps to `MEDIA_PAUSE` (127).**
+
+3. `BaseActivity.dispatchKeyEvent` (Patch H) propagates discrete media keys (`126 MEDIA_PLAY`, `127 MEDIA_PAUSE`, `86 STOP`, `87 NEXT`, `88 PREV`) so they reach `PlayControllerReceiver` (Patch E's discrete arms). **`85 MEDIA_PLAY_PAUSE` is NOT in the bypass set** — Patch H falls through to BaseActivity's stock body, which catches `v2 == KeyMap.KEY_PLAY (= 85)` at smali line 2215 and calls `PlayerService.playOrPause()` (toggle).
+
+`playOrPause()` is the legacy toggle: pause-while-playing → pause; pause-while-paused → resume. Press 1 pauses Y1; press 2 (which the user issues thinking "the first didn't pause") resumes. The "doesn't toggle back to pause" perception is because, separately, `T9emit pstat` had stopped firing at `12:52:57` (Bolt had stopped re-subscribing to `PLAYBACK_STATUS_CHANGED` after the rapid track-change burst), so Bolt's UI didn't receive the second `pstat=1` to flip its icon back. Two distinct bugs interacting.
+
+**CT differential** (user-reported, 2026-05-17): Samsung TV is instant and 100%, Kia has lag but works, Sonos works (modulo no playhead). Bolt is the only CT in the test matrix that exhibits this PAUSE symptom. The mechanism: TV / Kia / Sonos send `0x44 PLAY` as a universal toggle (the older convention — CT sends `0x44` every press regardless of icon state, and Y1's `PlayControllerReceiver.cond_play_strict` does the smart toggle `if isPlaying: playOrPause() else play(true)`). Their UIs follow `PLAYBACK_STATUS_CHANGED` to flip icons. Bolt sends DISCRETE `0x44` / `0x46` based on its current icon state — a more spec-compliant CT-side choice that exposes the AOSP `AVRCP.kl` deviation.
+
+**K1 — AVRCP.kl row 201: `MEDIA_PLAY_PAUSE` → `MEDIA_PAUSE`** (`patch_avrcp_kl.py`, file offset `0x2ac`, length-preserving). Post-K1: `KEY_PAUSECD (201)` → `MEDIA_PAUSE (127)` → Patch H propagates → `PlayControllerReceiver.cond_pause_strict` → `pause(0x12, true)` (discrete, idempotent on repeat). Row 200 (`KEY_PLAYCD → MEDIA_PLAY`) unchanged, so the TV / Kia / Sonos toggle-via-`0x44` path is preserved exactly.
+
+**Why patch AVRCP.kl despite `feedback_y1_upstream_spec_compliance.md` ("Don't change AVRCP.kl remap")?** The standing guidance is about not papering over BT-stack bugs with `AVRCP.kl` remaps. Here, the spec deviation IS in `AVRCP.kl` itself — stock AOSP's row 201 violates AVRCP 1.3 §4.6.1's discrete-PAUSE definition. The fix is a one-line completion of the AVRCP-spec → Linux-keycode → Android-keycode chain, not a remap to compensate for something else. It also benefits any music app on Y1 (including Rockbox if it ships with stock `AVRCP.kl`), matching the upstream-compatible philosophy.
+
+**Why not change `libextavrcp_jni.so`'s table instead?** Three options were considered:
+
+1. **AVRCP.kl row 201 → `MEDIA_PAUSE`** (chosen). Single-line text edit, length-preserving, no second binary touched, no risk of byte-mismatch on a future firmware that reorders the keymap table.
+2. Add `key 119 MEDIA_PAUSE WAKE` to AVRCP.kl + patch `libextavrcp_jni.so`'s table entry 2 to emit Linux `KEY_PAUSE` (119) instead of `KEY_PAUSECD` (201). Two-file change, additive, but introduces a second patcher coordination point.
+3. Patch only `libextavrcp_jni.so` to emit a different Linux keycode that the existing AVRCP.kl maps to anything except `MEDIA_PLAY_PAUSE`. Not possible — no Linux keycode in the stock AVRCP.kl maps to discrete `MEDIA_PAUSE`.
+
+Verification: `python3 patch_avrcp_kl.py /work/v3.0.2/system.img.extracted/usr/keylayout/AVRCP.kl` → output MD5 `dfd9afd58e94c38fc6f92592674b4ef1`. Cross-version verification: `/work/v3.0.7/system.img.extracted/usr/keylayout/AVRCP.kl` produces the same output MD5 (input is byte-identical). Idempotency: re-running on the patched output exits 0 with "already at expected output."
+
+**Pending.** Hardware flash + dual-capture from Bolt to confirm the discrete-PAUSE routing. Test plan: pause from playing → state goes paused, no resume on second pause press; play from paused → state goes playing. Should also verify TV / Kia / Sonos still work (the toggle-via-`0x44` path is untouched but worth confirming end-to-end).
+
+**Pending separately:** the `pstat`-delivery gap (Bolt stops re-subscribing to `PLAYBACK_STATUS_CHANGED` after a rapid track-change burst). K1 doesn't address that; it's a different RE thread. Hypothesis to investigate: Bolt's CT logic gates re-subscription on track stability (similar to its GEA-query gating from Trace #50-#53), and the rapid track-change burst (9 T5 emits in 90 seconds, post-12:52:57) trips the back-off. Mitigation might be to coalesce / debounce TRACK_CHANGED CHANGED emits during rapid skips, but this is speculative without more CT-side observation.
+
+## Trace #56 (2026-05-17) — B5.2t: suppress the track-change `pstat=PAUSED` blip
+
+**Hypothesis source.** Trace #55 closed with: "rapid `pstat` oscillation during track-change boundaries (`pstat=1 → pstat=2 → pstat=1 → pstat=2` within ~20 seconds) tripped Bolt's TG-misbehaving back-off heuristic." Re-examining the `dual-bolt-20260517-1254` log entries from Y1Patch's `PlaybackStateBridge.onPlayValue` instrumentation surfaces a consistent pattern at every track-change boundary:
+
+```
+12:52:42.266  KEY_NEXTSONG DOWN/UP (Bolt user-press skip)
+12:52:42.328  PlayControllerReceiver.onReceive
+12:52:42.378  ... routes through PlayerService.nextSong()
+12:52:42.392  PlayerService.pause(IZ) entry  ← internal to nextSong/restartPlay chain
+12:52:42.393  PlaybackStateBridge.onPlayValue entry  newVal=3 reason=3
+12:52:42.443  T5emit aid=cf00675b (TRACK_CHANGED for the new track, 50 ms after the pause)
+12:52:42.697  PlaybackStateBridge.onPlayValue entry  newVal=1 reason=8  ← new track playing, 304 ms after pause
+```
+
+The `pause(IZ)` call inside `restartPlay` hard-codes `Static.setPlayValue(3, 3)` (smali line 4344, `const/4 p2, 0x3; invoke-virtual {p1, p2, p2}`) — IDENTICAL `(newValue, reason)` shape to a user-initiated pause. So the inbound stream into `PlaybackStateBridge.onPlayValue` has no native signal distinguishing "this is the start of a track-change pause→play handshake" from "the user just pressed PAUSE on a stable track." With no signal, the previous `wakePlayStateChanged()` fired unconditionally → T9 → `PLAYBACK_STATUS_CHANGED CHANGED` with `pstat=0x02 PAUSED` on the wire, followed within 300 ms by another CHANGED with `pstat=0x01 PLAYING`. Five such transient pause/play pairs occurred between `12:52:42` and `12:53:53` — clustered around user-initiated track skips.
+
+Bolt's last `T8reg ev=01` (RegisterNotification(PLAYBACK_STATUS_CHANGED)) is at `12:52:53`. The next `T9emit pstat` after that (the `12:52:57.711` one for the Strike Anywhere track-change pause-blip) fires AGAINST Bolt's subscription gate (it had a pending subscription) — but Bolt doesn't re-subscribe afterward. The conjecture is Bolt's CT, after seeing the transient `pstat=2` emit that's immediately contradicted by `pstat=1`, decided the TG is unstable and stopped re-subscribing to that event class. POS_CHANGED (`ev=05`) re-subscribes later at `12:54:26`, suggesting the back-off is per-event-class, not session-wide.
+
+**Patch B5.2t.** Inject a `markTrackChange()` static call at the entry of `PlayerService.restartPlay(Z) / autoSwitch() / nextSong() / prevSong()` (four prepends in `PlayerService.smali`). `PlaybackStateBridge.markTrackChange()` sets a `trackChangeDeadlineMs` field to `SystemClock.elapsedRealtime() + 1000ms` (monotonic, no DST/wall-clock skew concerns). `onPlayValue` then skips `wakePlayStateChanged()` when `newValue == 3` (PAUSED) AND `elapsedRealtime() < trackChangeDeadlineMs`. The `setPlayStatus` file flush, `wakeTrackChanged()`, and `PositionTicker.stop()` all remain synchronous, so polling CTs (T6 GetPlayStatus) see correct paused state during the gap, and `TRACK_CHANGED CHANGED` still emits with the new track's UID at the correct cadence.
+
+End-to-end behaviour for a track-change skip post-B5.2t:
+
+```
+Bolt KEY_NEXTSONG
+  → PlayerService.nextSong() entry → markTrackChange() — deadline = +1000 ms
+  → PlayerService.restartPlay(Z) entry → markTrackChange() — deadline re-armed
+  → PlayerService.pause(IZ) → setPlayValue(3, 3) → onPlayValue(3, 3)
+    → file[792] = PAUSED (synchronous flush — polling-correct)
+    → SUPPRESSED: wakePlayStateChanged() (deadline in future)
+    → wakeTrackChanged() — T5 emits TRACK_CHANGED for new track
+    → PositionTicker.stop()
+  → IjkMediaPlayer.reset / setDataSource(new) / prepareAsync()
+  → ~300 ms later: OnPreparedListener → PlayerService.play() → onPlayValue(1, 8)
+    → file[792] = PLAYING
+    → NOT suppressed (newValue != 3)
+    → wakePlayStateChanged() — T9 emits PLAYBACK_STATUS_CHANGED pstat=PLAYING
+    → wakeTrackChanged() (idempotent on same-track edge)
+    → PositionTicker.start()
+```
+
+Net wire-side: CT sees ONE `PLAYBACK_STATUS_CHANGED CHANGED` per track-change (pstat=PLAYING for the new track), not a paused-then-playing flap. The TRACK_CHANGED CHANGED still emits (with the new UID) so the CT knows to invalidate its metadata cache. Same number of state transitions a TV/Kia/Sonos CT would see from a well-implemented TG.
+
+**User-pause path** (CTs sending discrete `PASSTHROUGH 0x46` post-K1 routing through `cond_pause_strict → pause(0x12, true)`): not affected unless the user happens to press PAUSE within 1s of a track-change entry, which is an unusual sequence. In that edge case the user pause is suppressed; the user perceives "pause didn't take" but a second press a moment later (after the 1s window) will pause normally. This trade-off is acceptable for the dominant case (Bolt subscriptions remain alive across track skips).
+
+**Verification done in this session (pre-flash):**
+
+1. `patch_y1_apk.py --clean-staging` against stock 3.0.2 APK → all 4 markTrackChange prepend anchors found; B5.2t reports success.
+2. Patched `PlayerService.smali` inspection: each of `restartPlay(Z) / autoSwitch() / nextSong() / prevSong()` has the `invoke-static markTrackChange()V` line at entry, after `.locals N` and before the first body statement.
+3. Patched `PlaybackStateBridge.smali` inspection: `trackChangeDeadlineMs:J` field present; `markTrackChange()V` method present with `SystemClock.elapsedRealtime() + 1000` math; `onPlayValue` body has the `cmp-long` + `if-ltz :skip_wake_play_state` block guarding `wakePlayStateChanged()` only when `v0 == 2` (AVRCP PAUSED).
+4. APK reassembly: smali assembler accepted the new `.locals 8` and `cmp-long` opcodes; classes.dex rebuilt to 9,244,228 bytes, classes2.dex to 8,971,328 bytes.
+
+**Pending hardware validation:** flash the new APK and re-capture Bolt + the other CTs. Expected wire-side change:
+
+- Bolt: T9emit pstat=2 events should disappear from track-change boundaries; only pstat=1 emits remain after each skip. T8reg ev=01 should keep firing (Bolt continues subscribing).
+- TV / Kia / Sonos: same as before — the AVRCP.kl K1 + B5.2t are both no-ops for the toggle-via-0x44 path until/unless those CTs press pause while a track-change is mid-flight, which is rare.
+
+## Trace #57 (2026-05-17) — B5.2t post-flash: suppression partial, in-flight PositionTicker broadcast leaks
+
+**Post-K1 + B5.2t capture** (`dual-bolt-20260517-1420`, music APK `com.innioasis.y1_3.0.7-patched.apk`, mtkbt MD5 `dc01a7c1...`). Bolt subscription health DRAMATICALLY improved: `T8reg ev=01` count `6 → 32` (vs `dual-bolt-20260517-1254`), 0 indication-590 rejects, no AVCTP retry storm.
+
+But B5.2t didn't fully suppress the `pstat=PAUSED` blip. Cross-referencing each `T9emit pstat=2` against `(nextSong | prevSong | restartPlay | autoSwitch)` entry timestamps:
+
+| emit timestamp | Δt from last track-change entry | classification |
+|---|---|---|
+| 14:18:19.751 | 3.85 s | user pause (legit, should emit) |
+| 14:18:31.300 | 0.02 s | **BLIP-LEAK** |
+| 14:18:44.510 | 0.02 s | **BLIP-LEAK** |
+| 14:18:53.622 | 9.13 s | user pause (legit) |
+| 14:19:03.663 | 0.07 s | **BLIP-LEAK** |
+| 14:19:09.230 | 5.64 s | user pause (legit) |
+| 14:19:19.842 | 0.10 s | **BLIP-LEAK** |
+| 14:19:23.796 | 0.08 s | **BLIP-LEAK** |
+| 14:19:31.914 | 0.07 s | **BLIP-LEAK** |
+| 14:19:39.055 | 0.06 s | **BLIP-LEAK** |
+
+7 of 10 emits are blip-leaks (Δt from `markTrackChange()` < 1 s, fully inside the suppression window). B5.2t's wake-suppression worked: `TrackInfoWriter.wakePlayStateChanged()` was NOT called during the window. So how did `T9emit pstat=2` still fire?
+
+**Root cause — in-flight `PositionTicker` broadcast.** Reconstructing the `14:18:31` leak:
+
+```
+14:18:30.565  PositionTicker.run (1 s tick)  →  wakePlayStateChanged()  →  Intent("playstatechanged") queued
+14:18:30.565  …Intent in flight to MtkBt's BroadcastReceiver thread
+14:18:31.284  PlayerService.prevSong() entry  →  markTrackChange() — deadline = 14:18:32.284
+14:18:31.285  PlayerService.restartPlay(Z) entry  →  markTrackChange() — deadline re-armed
+14:18:31.288  PlayerService.pause(IZ) entry
+14:18:31.288  onPlayValue(3, 3)  →  setPlayStatus(2)  →  file[792] = 2 (PAUSED)
+14:18:31.288  onPlayValue  →  WAKE SUPPRESSED (in window, B5.2t works)
+14:18:31.293  wakeTrackChanged()  (NOT suppressed, T5 fires)
+14:18:31.296  PositionTicker.stop()  (future ticks cancelled, but the 30.565 broadcast is already in flight)
+14:18:31.300  MtkBt finally drains the queued 30.565 Intent  →  notificationPlayStatusChangedNative  →  T9 trampoline runs
+14:18:31.300  T9 reads file[792]=2 (newly written), state[9]=1 (last_play_status)  →  EDGE  →  emit pstat=2  ←  THE LEAK
+14:18:31.539  onPlayValue(1, 8)  →  setPlayStatus(1)  →  file[792] = 1, normal wake (out of window)
+14:18:31.545  PositionTicker.start()
+```
+
+The in-flight broadcast was queued BEFORE the track-change started, so our `markTrackChange` deadline check (inside `onPlayValue`) never sees it. By the time MtkBt drains the broadcast, `file[792]` has flipped to 2 and T9 reads the new value. Wake-suppression alone is insufficient.
+
+**Fix.** Extend B5.2t to ALSO skip `TrackInfoWriter.setPlayStatus(2)` during the suppression window. With `file[792]` held at the prior PLAYING value through the blip, any in-flight T9 reads no edge → no emit. `mPlayStatus` also stays at the prior value, so downstream `flushLocked` calls (e.g. from `onEarlyTrackChange`) propagate the prior value. `wakeTrackChanged()` and `PositionTicker.stop()` still fire, so the CT still gets `TRACK_CHANGED CHANGED` for the new track.
+
+Concrete smali change: move `invoke-virtual {v1, v0}, ...setPlayStatus(B)V` from before the suppression branch (where it always fires) into the `:do_wake_play_state` arm (where it only fires when NOT suppressing).
+
+**Edge case.** User presses PAUSE within 1 s of a track-switch: pause is silently dropped (no CT-visible pstat=2). Audio still pauses at the engine level (IjkMediaPlayer.pause runs synchronously inside pause(IZ)), so the user hears silence, but the CT's UI stays at the "pause icon" because no pstat=2 ever reaches it. Once the user does anything else (play, next, etc.), the next pstat broadcast re-syncs. Acceptable trade-off for the dominant case (Bolt subscriptions stay alive across rapid track skips).
+
+**Wider observation.** Bolt's `T4 GEA queries` count is just 1 in the 5-min `dual-bolt-20260517-1420` capture. Pre-fix Bolt 1254 had 4 in ~3 min. Bolt's behaviour is now in a "subscribed, no metadata fetch" state, suggesting another gate is being tripped. Possibly the `pstat=2` leaks ARE the cause — Bolt sees them and stops querying GEA even though it keeps re-subscribing. The second B5.2t iteration (skip setPlayStatus too) should clear this once flashed.
+
+Pending: re-flash with the updated APK and re-capture. Expected delta: `T9emit pstat=2` count drops from 10 to ~3 (only the user-initiated pauses). `T4 GEA queries` should rise correspondingly.
+## Trace #58 (2026-05-17) — B5.2t setPlayStatus-skip reverted on first Sonos test, then re-applied after re-test
+
+**Initial post-flash report.** First Sonos capture (`dual-sonos-20260517-1757`) appeared to show a precise **2,004 ms** delay between every `PlayerService.play(Z) entry` and the matching `PlaybackStateBridge.onPlayValue entry`. Six distinct play(Z) calls in the capture all landed at 2.003-2.005 s. User-visible symptom: press pause -> audio pauses, press play -> audio doesn't resume visibly for ~2 s, user presses play again -> `cond_play_strict` sees `isPlaying=true` (the first press's resume finally landed) -> `playOrPause()` toggles back to PAUSE. Perceived as "stays paused."
+
+Cross-references at the time:
+
+- **Bolt 1420** (post B5.2t initial, BEFORE setPlayStatus-skip): `play(Z) -> onPlayValue` gap **8-10 ms**.
+- **Sonos 1347** (post K1, pre B5.2t entirely): gap **28-33 ms**.
+- **Sonos 1757** (post setPlayStatus-skip): gap **2004 ms**.
+
+The smali change in `b0d8be1` only moved `setPlayStatus(B)V` from before the suppression branch into the `:do_wake_play_state` arm. For `newValue=1` (PLAYING), the branch falls through to `:do_wake_play_state` and the same instructions execute -- same `setPlayStatus`, same `wakePlayStateChanged`, same `wakeTrackChanged`. Functionally identical for the PLAY path. The 2-second timing was unexplained.
+
+Reverted in `9c2f873` based on the user-reported regression.
+
+**Re-test.** On a second hardware test the user reported the symptom not reproducing -- `b0d8be1` was re-applied (revert-of-revert) and shipped again. The 2,004 ms delay in `dual-sonos-20260517-1757` may have been a transient -- possibly an IjkMediaPlayer buffer-warmup that happened to align with the user's first capture, or a unrelated timing artefact. The smali change is byte-identical for the PLAYING path, so a sustained 2 s regression has no mechanistic basis in the code.
+
+Keeping the setPlayStatus-skip in place. If the 2 s delay returns on subsequent captures, the next investigation target is `IjkMediaPlayer.start()` timing under varying `file[792]` write cadences -- but without reproducibility there's nothing to chase.
+
+
+
+## Trace #59 (2026-05-18) — §6.7.1 gate-clear relax tried, regressed Kia, reverted; analytical failure documented
+
+**Premise.** User reported the Kia EV6 head unit was laggy on position bar / play-pause icon / track-time display against Y1, while a captured Pixel-4-as-AVRCP-1.3-TG paired with the same Kia head unit was "instant." Both TGs advertised structurally identical SDP records (profile version 0x0103, `SupportedFeatures=0x0001`, no Browse PSM, same 8-event `GetCapabilities`), so the divergence wasn't in the wire-level capability handshake.
+
+### The bad inference
+
+I extracted the Pixel-Kia btsnoop at `/work/logs/pixel4-bugreport/FS/data/misc/bluetooth/logs/btsnoop_hci.log` with tshark and ran summary statistics by `btavrcp.pdu_id == 0x31` + ctype:
+
+| event | Pixel CHANGED count | apparent cadence |
+|---|---|---|
+| 0x01 PlaybackStatus | 4 | on edges |
+| 0x02 TrackChanged | 5 | on edges |
+| 0x05 PlaybackPositionChanged | 42 | ~1.02 s spacing |
+| 0x09 NowPlayingContent | 5 | on edges |
+
+I read "42 ev=05 CHANGEDs at 1 Hz" and concluded "Pixel emits ev=05 CHANGED at 1 Hz throughout the subscription, regardless of CT re-registration." I framed this as the "universal interpretation" of AVRCP 1.3 §5.4.2 (matching AOSP Bluedroid / BlueZ / iOS) and proposed removing Y1's four `_emit_subscription_write(a, 0, …)` gate-clear calls so Y1 would mirror what I claimed Pixel did.
+
+User asked the right question ("Will this break anything? Are we sure this matches Pixel?") and I answered yes on both counts, with confidence that wasn't backed by per-frame verification.
+
+Committed as `40fca40 fix(trampolines): emit CHANGED for subscription lifetime, not once per registration`:
+
+| event | gate byte | emit site | clear site removed |
+|---|---|---|---|
+| 0x01 PLAYBACK_STATUS | state[14] | T9 line 2293 | T9 line 2298 |
+| 0x02 TRACK_CHANGED | state[16] | T5 line 925 | T5 line 942 |
+| 0x05 PLAYBACK_POS_CHANGED | state[13] | T9 line 2516 | T9 line 2523 |
+| 0x08 PLAYER_APP_SETTINGS | state[15] | T9 line 2395 | T9 line 2400 |
+
+`OUTPUT_MD5: d803f42c... → 813d008db4914f43e33e0dd3e11a25e7`; `OUTPUT_DEBUG_MD5: 3900c800... → f723fadb6d629d4ae6ef738552cb734b`.
+
+### Post-flash regression (capture `dual-kia-20260518-0836`)
+
+Debug-instrumented build. ~20 min of Kia playback with multiple play/pause cycles and track skips. Y1T trampoline trace:
+
+| `Y1T` tag | pre-relax `dual-kia-20260517-1842` | post-relax `dual-kia-20260518-0836` |
+|---|---|---|
+| `T9emit pstat=` | 1 | 6 (one per actual edge) |
+| `T9emit pos=` | 1 | **974 at ~1 Hz** |
+| `T5emit aid=` | 1 | 10 |
+| `T8reg ev=05` from Kia | 0 | 9 |
+
+The code was firing as designed. Y1 emitted ev=05 CHANGED 974 times. Kia re-registered ev=05 nine times. Net ratio: **108 unsolicited CHANGEDs per Kia-issued re-register**.
+
+User-visible: play/pause button no longer responsive, track-time display broken, playhead-position scrubber broken. Worse than the pre-relax state in every UI dimension.
+
+### The actual Pixel pattern (TL field revealed it)
+
+Re-extracted the Pixel ev=05 frames with the AVCTP transaction label field this time:
+
+```
+Frame 1511  NOTIFY  ev=05 TL=5    Kia subscribes
+Frame 1512  INTERIM ev=05 TL=5    Pixel ack
+Frame 1646  CHANGED ev=05 TL=5    Pixel emits (~6 s later, on first state change)
+Frame 1648  NOTIFY  ev=05 TL=7    Kia re-registers ~6 ms after CHANGED
+Frame 1649  INTERIM ev=05 TL=7    Pixel ack
+Frame 1660  CHANGED ev=05 TL=7    next emit, 1.002 s after re-register
+Frame 1662  NOTIFY  ev=05 TL=b    re-register
+Frame 1663  INTERIM ev=05 TL=b
+Frame 1670  CHANGED ev=05 TL=b    next emit, 1.023 s after re-register
+... pattern repeats 42 times ...
+```
+
+Every CHANGED's AVCTP TL matches a NOTIFY immediately preceding it. **Pixel emits one CHANGED per RegisterNotification — strict §6.7.1.** The 1 Hz wire cadence comes from Kia re-registering within ~6 ms of every CHANGED, closing the cycle fast enough that the music app's 1 Hz internal tick determines the inter-CHANGED interval, not from Pixel emitting unsolicited.
+
+The TL data was in the same tshark output I'd already extracted at the time of the proposal. I just didn't compare adjacent frames' TLs — the aggregate statistic ("42 at 1 Hz") fit the hypothesis I was looking for and I stopped checking.
+
+### What the relax actually did
+
+Y1 pre-relax was already implementing strict §6.7.1 — the same model Pixel implements. The "universal interpretation" I argued for was a deviation **from** Pixel, not an alignment with it. Once flashed against Kia, the 108:1 CHANGED-to-re-register ratio overwhelmed Kia's UI state machine, which presumably treats most of those CHANGEDs as stale duplicates and discards / mis-orders them — breaking every UI surface that the strict-1:1 cycle had been keeping correct.
+
+Reverted as `2c926ee` (`git revert 40fca40`). `git diff checkpoint/pre-547-relax..HEAD` is empty after the revert; rebuilt MD5s match the original `d803f42c… / 3900c800…`.
+
+### The real root cause is still unsolved
+
+The starting observation stands: **Kia re-registers ev=05 within ~6 ms after every CHANGED against Pixel, but rarely re-registers it at all against Y1 in the pre-relax build** (zero re-registers in `dual-kia-20260517-1842`; nine re-registers in the post-relax `dual-kia-20260518-0836` only because the flood of unsolicited CHANGEDs presumably destabilised Kia's subscription state and forced it to reset). Both Y1 and Pixel advertise the same SDP, both emit `CHANGED` on the same trigger, both are strict §6.7.1. So *something* about Y1's response shape or session establishment causes Kia to skip the re-register that the same Kia issues without delay against Pixel.
+
+Candidates (none verified — listing as hypotheses to test):
+
+1. **M5 TID echo not actually echoing.** Y1's `patch_mtkbt.py` M5 trampoline at `0x6d186` is supposed to preserve the inbound NOTIFY's TID across Path B's `chan+0x39` clobber. If broken, every CHANGED ships with TID=0 (or whatever was last latched), and Kia's §6.5 TID-echo check silently drops the response → no observable CHANGED → no re-register. Y1's `btlog`-based wire view can't disambiguate this because `tools/btlog-hci-extract.py` mis-aligns hex byte runs across records (every frame shows AVCTP=0x02, which is `TL=0, CR=1`; with no proof that's the actual on-wire byte). **Most tractable diagnostic**: add `_emit_native_log_u32(a, "log_fmt_t8tid", N)` at the T8 INTERIM site logging the inbound TID, and at every T5 / T9 CHANGED emit logging whatever's at `chan+0x39` at that instant. Compare against `T8reg` cadence to verify echo correctness.
+2. **CoD class differential.** Pixel advertises Smartphone CoD; Y1 advertises whatever its kernel BT init sets (often a MediaTek "Wearable Audio" variant). Kia's known-quirks table may gate "re-register on CHANGED" behavior on CoD. Verifiable from a Linux box near both: `hcitool inq -i hci0`.
+3. **ServiceName SDP attr 0x0100.** Y1 advertises "Advanced Audio" (AOSP A2DP-SRC name, wrong slot — V7 fill-the-stripped-Browse-slot artifact). Pixel advertises "AV Remote Control Target". Kia may special-case AVRCP TGs by name. Cheap test: byte-swap the string in V7 to match Pixel exactly.
+
+The order I'd attack these is (1) → (3) → (2). M5 verification is closest to the wire and is the most likely silent-failure mode given how the M5 patch was constructed; the ServiceName swap is cheap to try if (1) clears; CoD is the most disruptive to investigate and probably last.
+
+### Lessons (logged to memory at `feedback_verify_before_inferring.md`)
+
+- Aggregate statistics are weak evidence for "the reference TG behaves like X". Per-frame field comparisons are strong. When proposing a code change, the response must include per-frame evidence that proves the inference, not just the count / cadence.
+- Confirmation bias: I was looking for justification to relax the gates (the user had asked "should we?") and the "42 at 1 Hz" statistic fit that frame, so I stopped looking at the data that would have falsified the hypothesis.
+- When the user pushes back on the premise of a change ("I thought we did this to mimic Pixel?"), treat that as a signal to re-verify from scratch, not to re-defend the existing inference.
+- If a change is going to be flashed to hardware, the diagnostic that would have falsified the hypothesis should appear in the proposal before the commit, not after the regression.
+
+### Net state
+
+- `checkpoint/pre-547-relax` is still the working baseline. `git diff` between HEAD and it is empty.
+- `dual-kia-20260518-0836` is preserved as the regression evidence — useful as a falsifying capture for future "should we relax the gates?" proposals.
+- Real root cause for the pre-relax Kia position-bar lag is unsolved; M5 TID verification is the next concrete diagnostic step, not another speculative code change.
+
+### M5 TID-echo diagnostic landed in `a94abeb`, log site moved in followup
+
+Single new `Y1T : T9tid c17=NN` log at the PLAYBACK_STATUS_CHANGED CHANGED emit, just before `PLT_reg_notievent_playback_rsp` is invoked. `NN` is the byte at `struct[+0x19] = conn[17]` — what mtkbt's response builder reads to populate the outbound AVCTP TL nibble per the M5 design at `patch_mtkbt.py:317-410`.
+
+**Initial site was ev=05 (PLAYBACK_POS_CHANGED)**, picked because that was Kia's lag-relevant subscription. Empirical follow-up against captures `dual-kia-20260518-1131` and `dual-tv-20260518-1138` showed:
+- Kia: 1 `T9tid c17` line per session (gate-cleared then no re-register). Sample of `00`.
+- TV: 0 `T9tid c17` lines per session (TV doesn't subscribe to ev=05).
+
+One sample point can't distinguish "M5 echoes correctly but Kia's first NOTIFY had TL=0" from "M5 broken on outbound". Moved the log to ev=01 because:
+1. ev=01 PLAYBACK_STATUS_CHANGED routes through the same Path B outbound code as ev=05 — same M5 echo mechanism.
+2. TV subscribes to ev=01 and re-registers within ~17 ms after every CHANGED (textbook §6.7.1 tight loop). So TV captures produce `T9emit pstat=N` + `T9tid c17=NN` pairs on every actual play/pause edge — many samples per session, with the inbound TL cycling per Kia's NOTIFY cadence.
+
+If `T9tid c17=NN` cycles across the TV capture window matching the expected AVCTP TL rotation pattern (0-15 incrementing), M5 is verified working and the lag has a different root cause. If it stays at `00` across many emits, M5 is silently failing.
+
+`patch_libextavrcp_jni.py` headers:
+- `STOCK_MD5    = fd2ce74db9389980b55bccf3d8f15660`
+- `OUTPUT_MD5   = d803f42c973bf9539f4d03ccb658cab3` (release — byte-identical to the pre-instrumentation baseline)
+- `OUTPUT_DEBUG_MD5 = 4995ca171d0c446b7ce8886022ba7b2c` (debug — has the new log at the pstat emit)
+
+LOAD #1 padding budget had only 44 B headroom over the pre-instrumentation debug blob; the single log site consumes 40 of those bytes. A patcher-side bug surfaced during this work: `patch_libextavrcp_jni.py:160-251` writes the trampoline blob with no upper-bound check against LOAD #2's file start (0xbc08); over-budget blobs silently overwrite LOAD #2's relocation data. Out of scope here but worth a follow-up commit to add the guard.
+
+**Capture recipe (TV + Y1, preferred):**
+
+```bash
+# On the flash box
+git pull
+KOENSAYR_DEBUG=1 ./apply.bash --avrcp    # or whatever flag set rebuilds libextavrcp_jni.so
+# Verify the running binary post-flash matches OUTPUT_DEBUG_MD5
+adb shell md5sum /system/lib/libextavrcp_jni.so   # should print 4995ca171d0c446b7ce8886022ba7b2c
+
+# Pair Y1 to TV, start music playback, exercise play/pause repeatedly (each
+# play/pause edge produces one T9emit pstat + one T9tid c17 sample).
+./scripts/dual-capture.sh tv
+```
+
+**Analysis:**
+
+```bash
+grep 'Y1T' /work/logs/dual-tv-<latest>/logcat.txt | grep -E 'T8reg ev=01|T9tid c17|T9emit pstat'
+```
+
+Look at the `T9tid c17=NN` values across the capture window:
+
+| Pattern | Interpretation |
+|---|---|
+| `c17` walks a small-integer sequence (0-0x0F) matching the cadence of TV's `T8reg ev=01` re-registrations | M5 is preserving the inbound TID across the outbound Path B traverse. The lag root cause is **not** TID echo — move to the next hypothesis (CoD class differential or ServiceName SDP byte swap). |
+| `c17=00` on every emit, regardless of `T8reg ev=01` cadence | M5 is silently failing on the outbound path. The cave's discriminator at `[r5, 8]` is wrong for this build / firmware combination, or the strb_w is still firing despite the `beq` skip. Investigate by disassembling `mtkbt:0x6d186` post-patch and confirming the cave bytes at `0xf3680` are what `patch_mtkbt.py` writes. |
+| `c17=NN` where `NN` is constant and non-zero across many emits | M5 latches once but never refreshes — partial bug. The inbound-path strb at the cave should be re-firing on every subsequent CMD; if `c17` stays pinned to whatever value happened to be there at the first inbound, the cave's discriminator predicate is misfiring (treating subsequent inbounds as outbound). |
+| No `T9tid c17` lines at all but `T9emit pstat` lines present | Build/flash issue — the patcher ran but the debug-instrumented blob didn't land. Re-verify `OUTPUT_DEBUG_MD5` against the running `/system/lib/libextavrcp_jni.so`. |
+
+Each `T9tid c17=NN` line is paired with a `T9emit pstat=N` line on the immediately preceding logcat row. The `T8reg ev=01` lines after each `T9tid c17` mark when TV re-registers — and that re-register carries a fresh AVCTP TL that should appear as the NEXT `T9tid c17` value (one emit later).
+
+Kia captures will also produce `T9tid c17` data, but only one sample per AVRCP session (strict §6.7.1 + Kia not re-registering). TV is the higher-sample-rate source and the recommended capture target for this diagnostic.
+
+### Followup: D1 mtkbt-side wire-source log (`c39`) added to disambiguate `c17`
+
+The JNI-side `T9tid c17=NN` log captured 11 samples across one TV session, all `00`. By itself this is ambiguous: it could mean the JNI response builder's `conn[17]` slot is unrelated to the AVCTP TL the wire actually carries (in which case `c17=00` is harmless and M5 is still working), or it could mean M5 is broken end-to-end. The two interpretations bear on the next hypothesis: if M5 is working we move on (ServiceName SDP / CoD differential); if M5 is broken we fix M5 first.
+
+The disambiguating measurement is the byte at `chan+0x39` at the moment the AVCTP wire-frame builder is about to encode it as the outbound TL nibble. That site is `fcn.0xae418:0xae448` in mtkbt — `ldrb r6, [r4, #0x15]` with `r4 = chan+0x24`, so `[r4,#0x15] = chan+0x39`. The same byte that M5's cave at `0xf3680` writes from inbound packets via Path B's `strb.w r0, [r4, #0x29]` (where Path B's `r4 = chan+0x10`).
+
+**D1 / D1-CAVE** in `patch_mtkbt.py` (debug-only, gated on `KOENSAYR_DEBUG=1`) hooks that ldrb site with a `b.w` into a new 50-byte cave at `0xf36a0` (in the LOAD #1 padding region, past M5's cave). The cave logs `Y1T : M5wire c39=NN` via `__android_log_print` (PLT thunk at `0xaef8`), re-executes the two displaced ldrb instructions verbatim, and branches back to `0xae44c`. mtkbt's `OUTPUT_DEBUG_MD5 = c476b0dc17cf37723b7c256b27c9082c`; the release path stays at the pinned `OUTPUT_MD5 = dc01a7c1337ad2dc6573819bdc22834d`.
+
+The cave preserves the calling convention — `push {r0-r4, lr}` keeps sp 8-aligned at the blx (r4 is preserved through the call), and the 6-register push matches the function prologue's stack discipline. `pop.w {r0-r4, lr}` restores everything. r4 (the `chan+0x24` arg) is untouched. Net wire behaviour: identical to non-debug, plus one logcat line per outbound AVCTP frame.
+
+**Diagnostic pairing.** The JNI side already logs `T9tid c17=NN` on every play/pause edge (PLAYBACK_STATUS_CHANGED emit). The mtkbt side now logs `M5wire c39=NN` on every outbound AVCTP frame. Compare both streams from the same TV capture:
+
+| c17 (JNI conn[17]) | c39 (wire chan+0x39) | Interpretation |
+|---|---|---|
+| `00` constant | walks 0..0x0F matching `T8reg ev=01` cadence | M5 is working; `conn[17]` is an unrelated slot. Lag root cause is not M5. Move to next hypothesis. |
+| `00` constant | `00` constant across all emits | M5 is broken on the wire side too. The cave's discriminator at `[r5, #8]` is misfiring or the strb_w still clobbers chan+0x39 on outbound. Disassemble the running mtkbt at `0x6d186` + `0xf3680` to confirm landed bytes. |
+| `00` constant | non-zero constant | M5 latches once, never refreshes. Inbound-path strb predicate is wrong; subsequent inbounds aren't propagating their TID. |
+| matches c39 | matches c17 | `conn[17]` and `chan+0x39` track each other; the JNI propagates the same TID source the wire builder uses. M5 working. |
+
+Diagnostic build / pull / grep flow:
+
+```
+# (on dev box)
+KOENSAYR_DEBUG=1 ./apply.bash    # produces debug-instrumented mtkbt + libextavrcp_jni
+# (on Y1 flash box, after pulling latest)
+KOENSAYR_DEBUG=1 ./apply.bash
+adb reboot
+# play music on Y1, pair to TV, let it run for a few minutes
+adb logcat -d | grep 'Y1T' | grep -E 'M5wire c39|T9tid c17|T9emit pstat|T8reg ev=01'
+```
+
+The expected per-emit ordering inside a single AVRCP session against TV:
+
+```
+Y1T : T8reg ev=01 reason=0F     (TV re-registers, fresh inbound TL = N)
+Y1T : T9emit pstat=2            (next play/pause edge fires T9)
+Y1T : T9tid c17=NN              (JNI builder reads conn[17] just before sending)
+Y1T : M5wire c39=NN             (mtkbt wire builder reads chan+0x39 immediately after)
+```
+
+If `c39` walks 0..0x0F across the session and matches the prior `T8reg`'s implied TL, M5 is verified end-to-end and the Kia lag is **not** a TID-echo issue. If `c39` stays `00`, M5 is broken on the wire and needs revisiting.
+
+## Trace #60 (2026-05-18) — Bolt's sequential-event-cursor model identified; NOT_IMPLEMENTED-via-UNKNOW_INDICATION fix attempted, reverted (UNKNOW_INDICATION at 0x65bc is actually the PASSTHROUGH response builder)
+
+### Wire-level evidence from `dual-bolt-20260518-1507` (KOENSAYR_DEBUG=1 trampoline build)
+
+The 2026-05-18 Bolt capture shows the first ~4 track changes updating metadata correctly, then a hard cut-over: track #5 ("You Get Worked") and track #6 ("Title Holder") never refresh the Bolt screen's metadata pane. The shuffle UI also flickers briefly between tracks 4 and 5.
+
+Reconstructing the Y1-side timeline from `Y1Patch fL.id=` markers (music app track-id changes) cross-correlated against `Y1T T8reg ev=` markers (Bolt's RegisterNotification CMDs reaching the JNI):
+
+| Phase | Window | Bolt's RegisterNotification events |
+|---|---|---|
+| P0 | session start → 15:05:08 (30 s) | ev=01 every 3 s |
+| P1 | 15:05:18 (track #3 edge) | no T8reg |
+| P2 | 15:05:44 → 15:06:14 (33 s) | ev=05 every 3 s |
+| P3 boundary | **15:06:17.616** | first T8reg ev=09 (NOW_PLAYING_CONTENT_CHANGED, AVRCP 1.4+) |
+| P3 | 15:06:17 → 15:06:44 | ev=0a every 3 s |
+| P4 | 15:06:47 → 15:07:08 | ev=08 every 3 s |
+| (silent) | 15:07:08 → 15:08:15 | no T8reg |
+
+At any moment Bolt is subscribed to exactly **one** event_id and re-registers it every ~3 s until either Y1 fires a CHANGED or some internal trigger advances the cursor. This is fundamentally different from every other CT in the Y1 test matrix:
+
+| CT | Pattern | Evidence |
+|---|---|---|
+| Pixel 4 (reference) | Parallel: subscribes to {01,02,05,08,09,0a,0b,0c} in a 110 ms burst, re-registers each on its own CHANGED | `pixel4-bugreport/.../btsnoop_hci.log` frames 1498-1545 |
+| TV | Parallel: tight bursts of {01,08,09,0b,0c} every track edge + connection event | `dual-tv-20260518-1432`: 14:30:23.905-32.032 (5 events in 127 ms), repeats at 14:31:50 |
+| Sonos | Parallel: ev=01 + ev=09 interleaved within ms | `dual-sonos-20260517-1852`: 18:50:05.670 ev=01 → .673 ev=09 (3 ms gap) |
+| Kia | Mostly parallel, low cadence: single burst of {01,05,08,09,0a,0b,0c}, then ev=01 / ev=05 polling | `dual-kia-20260518-1131` |
+| **Bolt** | **Sequential cursor**, one event_id at any moment | This capture |
+
+Bolt's cursor advances away from an event only after that event delivers a CHANGED. Once parked on ev=0a (AVAILABLE_PLAYERS_CHANGED), Y1 INTERIM-acks but never emits CHANGED — ev=0a / ev=0b / ev=0c are 1.4+ events for which Y1 has no semantic source. The cursor stalls there indefinitely; Bolt stops re-registering ev=01 / ev=02 / ev=05 (the events Y1 actually drives) and the metadata pane freezes on whatever was playing when the cursor crossed into the 1.4+ band.
+
+### Why Trace #32's hypothesis turned out to invert here
+
+Trace #32 added the four 1.4+ event IDs (0x09-0x0c) to T1's GetCapabilities advertisement *and* to T8's INTERIM dispatch table because Pixel-as-TG (in `pixel4-bugreport/.../btsnoop_hci.log`) advertises that exact set from an AVRCP 1.3-declared TG. The hypothesis was that strict CTs gate metadata-pane render on the 1.4+ ack. Trace #33 immediately refuted the gating hypothesis for Bolt (post-flash pane still empty) and located the actual blocker at the InformDisplayableCharacterSet ACK path. The 1.4+ INTERIM-ack code stayed in tree from Trace #32 as inherited dead-end work.
+
+Cross-checked against every CT in the matrix: TV / Sonos / Kia / Pixel all subscribe to ev=09 against the current INTERIM-only-never-CHANGED Y1 behavior and their UIs work — none of them depend on a CHANGED for ev=09-0c. The 1.4+ INTERIM-acks were load-bearing for nothing in the matrix; they were Bolt-specific harm.
+
+### Fix attempted (commit `e30dab0`, reverted in commit-after-this)
+
+`_emit_t8`'s `t8_check_8` `bne` retargeted to `t8_unknown_event` directly. The four arms for ev=0x09 / 0x0a / 0x0b / 0x0c were deleted. Any RegisterNotification with event_id ∉ {0x01, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08} fell through to `UNKNOW_INDICATION` at `0x65bc`. T1's GetCapabilities advertised set unchanged.
+
+### Post-flash result: MtkBt AVRCP service restarts every ~6 s
+
+`dual-bolt-20260518-1547` (post-flash capture):
+
+```
+15:46:32.996  JNI : MSG_ID_BT_AVRCP_CMD_FRAME_IND size:13 rawkey:0 data_len:13    ; inbound RegNotif ev=09
+15:46:32.997  Y1T : T8reg ev=09                                                    ; T8 entered
+15:46:32.999  JNI : AVRCP_SendMessage len=214
+15:46:33.000  JNI : msg=520, ptr=0x523AA9B0, size=214                              ; "NOT_IMPLEMENTED" IPC reply
+15:46:33.001  JNI : send msg success : 242
+            (no M5wire follows — mtkbt never emits the wire frame)
+15:46:37.415  EXT_AVRCP: BluetoothAvrcpService Constructor enable (NEW PID 1237)   ; mtkbt service restarted
+```
+
+Every `T8reg ev=09` is followed by a 4-second gap and a new BluetoothAvrcpService PID. The cycle repeats for every ev=09 RegisterNotification Bolt sends. mtkbt's AVRCP service is being killed by a watchdog timeout because the IPC frame we sent never makes it to the wire.
+
+### Root-cause: `UNKNOW_INDICATION (0x65bc)` is the PASSTHROUGH response builder
+
+`r2 -a arm -b 16 -m 0x6000 -c 's 0x65bc; pd 60' libextavrcp_jni.so` disassembly:
+
+```
+0x000065bc  4ff0090c  mov.w  ip, 9
+0x000065c0  0824      movs   r4, 8
+0x000065c2  0df5bd75  add.w  r5, sp, 0x17a
+0x000065c6  8de81010  stm.w  sp, {r4, ip}
+0x000065ca  0495      str    r5, [sp, 0x10]
+0x000065cc  0024      movs   r4, 0
+0x000065ce  dff83056  ldr.w  r5, [0x00006c00]   ; "8BluetoothAvrcpService_connectReqNativeP7_JNIEnv..."
+0x000065d2  54ae      add    r6, sp, 0x150
+0x000065d4  cdf80ce0  str.w  lr, [sp, 0xc]
+0x000065d8  06f12906  add.w  r6, r6, 0x29
+0x000065dc  0294      str    r4, [sp, 8]
+0x000065de  fdf722e8  blx    rsym.btmtk_avrcp_send_pass_through_rsp     ← PASSTHROUGH response emitter
+0x000065e2  3946      mov    r1, r7
+...
+```
+
+`0x65bc` is NOT a generic AV/C NOT_IMPLEMENTED dispatcher. It's the PASSTHROUGH-CMD response path: it stages a passthrough response in the JNI's per-conn buffer and calls `btmtk_avrcp_send_pass_through_rsp`. For PASSTHROUGH CMDs the inbound IPC frame has `rawkey != 0`; the builder reads that byte and constructs the response.
+
+T_charset (PDU 0x17) and T_continuation (PDU 0x40 / 0x41) happen to work through this path because their inbound IPC frames are structurally compatible with what the PASSTHROUGH builder reads. PDU 0x31 (RegisterNotification) has `rawkey == 0` and a 13-byte payload of `(PDU, RFU, params_length=5, event_id, playback_interval[4])` — the builder reads garbage from that, stages a malformed IPC reply, and the IPC send succeeds (mtkbt accepts the 242-byte datagram) but mtkbt's parser then chokes on the malformed frame and stalls. After ~4 s the system watchdog kills the AVRCP service and bluetoothd respawns it.
+
+### Why TV and Sonos didn't exhibit this in their post-flash captures
+
+TV and Sonos never sent `T8reg ev=09` in `dual-tv-20260518-1551` / equivalents — they subscribe to ev=09 in parallel bursts during early session connection only. By the time of the user's test play sessions, TV/Sonos had already armed their 1.4+ subscriptions and weren't re-registering them. So they never hit the broken t8_unknown_event path post-flash. Bolt's sequential cursor cycles through events every ~30 s; that's what exposed the bug.
+
+### Side-effect (interesting datapoint)
+
+User reported a progress bar appearing on Bolt's screen for the first time during this flash, even though metadata stayed broken. Likely explanation: between mtkbt restarts, Bolt receives a few `reg_notievent_pos_changed_rsp` CHANGED frames carrying the live position payload — enough to render a position bar briefly. The position didn't move correctly because the position-CHANGED cadence is interrupted by each mtkbt restart.
+
+### Fix reverted; next steps
+
+`_emit_t8` restored to its pre-Trace-#60-attempt state (INTERIM-acks for events 0x09-0x0c). MD5s rolled back to the pre-attempt values.
+
+Open question: how to emit a NOT_IMPLEMENTED RegisterNotification response for ev=09-0x0c without routing through the PASSTHROUGH builder. Candidate paths:
+
+1. **Call a `reg_notievent_*_rsp` PLT helper with r1 != 0** (the "reject" branch of the existing builder per Trace #34's RE: `cbnz r5, reject_path` on r1). What ctype that path emits on the wire is unknown without disassembling the helper at `libextavrcp.so:0x2458`.
+2. **Add a new mtkbt-side patch** to extend the per-event response builder at `fcn.000121d8` with a NOT_IMPLEMENTED branch keyed on a third sentinel value of `ctxt[8]` (current M1 widening picks INTERIM at 0x0F, falls through to CHANGED otherwise — could add 0x08 → NOT_IMPLEMENTED).
+3. **Find the JNI's actual "unknown event_id" handler** — the stock JNI may have a path that emits NOT_IMPLEMENTED for unsupported PDU 0x31 event_ids. We haven't located it yet.
+
+Of these, option 1 is the cheapest experiment (no mtkbt change, no new RE) — worth a small instrumented diagnostic flash to discover what wire ctype the reject path actually emits.
+
+### Option 1 disqualified by disassembly
+
+`btmtk_avrcp_send_reg_notievent_track_changed_rsp` (libextavrcp.so:0x2458) and the structurally identical helpers (`reached_end_rsp` 0x24c8, `reached_start_rsp` 0x2528, `pos_changed_rsp` 0x2588, `battery_status_changed_rsp` 0x25f0, `system_status_changed_rsp` 0x2658, `now_playing_content_changed_rsp` 0x26c0, `player_appsettings_changed_rsp` 0x2720, `availplayers_changed_rsp` 0x27b0, `addredplayer_changed_rsp` 0x2810, `uids_changed_rsp` 0x2880, `volume_changed_rsp` 0x28e8) all share the same shape:
+
+```
+cbnz r5, reject_branch    ; r5 = caller's r1 (status/success arg)
+                          ; r1 == 0 → success path:
+                          ;   strb r7 (=r2 reasonCode), [sp, 0xc]  ; ipc[8] = reasonCode
+                          ;   strb event_id_const,      [sp, 0xd]  ; ipc[9] = event_id
+                          ;   (event-specific payload write)
+                          ; r1 != 0 → reject path:
+                          ;   strb r5 (=r1 status),     [sp, 0xb]  ; ipc[7] = status
+                          ;   strb 1,                   [sp, 0xa]  ; ipc[6] = 1
+                          ;   (NO write to sp[0xc] — ipc[8] stays memset zero)
+common_tail:
+mov.w r1, 0x220           ; msg_id = 544 (same as success!)
+bl AVRCP_SendMessage
+```
+
+Both paths send `msg=544`. The reject path leaves `ipc[8] = 0` (memset zero, never overwritten). Mtkbt's M1-widened dispatcher at `fcn.0x121d8:0x12230` does `cmp ctxt[8], 0x0F` — `0 != 0x0F` → falls through to the CHANGED branch — emits AV/C ctype `0x0D` on the wire. Wire result is a malformed CHANGED, not NOT_IMPLEMENTED.
+
+Conclusion: option 1 cannot emit NOT_IMPLEMENTED on the wire without an mtkbt-side patch.
+
+### Option 2 (M6) static verification
+
+End-to-end chain of an `ipc[8] = 0x08` IPC payload through mtkbt, walked by disassembly with no empirical step required:
+
+```
+JNI helper: ipc[8] = caller's r2 (= 0x08)
+mtkbt fcn.0x67768 → 0x518ac (msg_id tbb) → 0x12478 (event_id tbb)
+fcn.0x12478 [0x124a0] ldrb r3, [r4, 9]            ; r3 = event_id
+            [0x124a8] tbb [0x124b0]               ; dispatch per-event
+            verified: events 0x01-0x0D all dispatch to handlers (122cc /
+            122e4 / 12324 / 12354 / 12390 / 12270 / 123f8 / 1243c / 123c4)
+            that all `bl 0x121d8` (10/10 checked, within 40 instructions of
+            entry)
+fcn.0x121d8 [0x1222e] ldrb r1, [r4, 8]            ; r1 = ctxt[8] = 0x08
+            [0x12230] cmp  r1, 0x0F               ; M1 widened (0x01 → 0x0F)
+            [0x12232] bne  0x12240                ; 0x08 ≠ 0x0F → CHANGED branch
+            [0x12244] (was: movs r1, 0xD; with M6: nop)                ← M6
+            [0x1224e] bl   fcn.0x11894            ; r1 still 0x08
+fcn.0x11894 [0x11906] cmp r6, 6                    ; r6 = r1 (caller's) = 0x08
+            [0x1190a] ite hi
+            [0x1190c-0x1190e] r2 = (r6 > 6) ? 0 : 1
+            [0x11912] strb r2, [r4, 9]            ; packetFrame[9] = 0 (response;
+                                                  ;   for ctype > 6)
+            [0x11922] strb r6, [r4, 0xb]          ; packetFrame[0xb] = 0x08
+            [0x11906] (also: bl 0xf0bc with r1 = packetFrame)
+fcn.0xf0bc  [0xf12a] ldrb r3, [r6, 9]             ; r3 = packetFrame[9] = 0
+            [0xf138] cbz  r3, 0xf186              ; taken → Path B
+Path B:
+fcn.0xef08  [0xef5e] ldrb r2, [r5, 0xb]           ; r2 = packetFrame[0xb] = 0x08
+            [0xef68] strb r2, [r4]                ; wire_buf[0] = 0x08    ← KEY
+            (no other use of packetFrame[0xb] in body; wire_buf[3] = 0
+             hardcoded from fcn.0x11894:0x11926)
+fcn.0x6d0f0 (M4 site, list-check bypassed)
+            [0x6d118] ldrb r3, [r5]               ; r3 = wire_buf[0] = 0x08
+            [0x6d11e] cmp  r3, 0x0F               ; ≠ 0x0F
+            [0x6d122] (ne) strb 1, [r4, 0xf0]     ; non-INTERIM flag SET
+            [0x6d126] bne  common-path            ; skips INTERIM-specific
+                                                  ; wire_buf[3] check
+            (common path: builds AVCTP TID nibble + packet_type into
+             [r4, 0xe0..0xf0], then b.w 0xae5e4 L2CAP_SendData)
+fcn.0xae5e4 reads packetFrame [9, 0x12, 0x16, 0x1c] (NOT wire_buf[0]);
+            fragmentation + chip-level send
+fcn.0xae418 AVCTP header builder writes TID/packet_type into AVCTP layer
+            (wire_buf is the L2CAP payload below this — opaque)
+WIRE: AV/C frame byte 0 = 0x08 (NOT_IMPLEMENTED)
+```
+
+Single reader of `[r4, 0xf0]` (the non-INTERIM flag set at 0x6d122) is at `0x7ecf4` inside `ittt eq` block — passive status retrieval, not a drop gate. Confirmed by `/x f00094f8` byte-pattern search across the binary.
+
+Backward-compatibility audit for M6: every current call site to `reg_notievent_*_rsp` (T2 / extended_T2, T5, T8, T9, T_papp) passes `r2 ∈ {0x0F INTERIM, 0x0D CHANGED}`.
+- `r2 = 0x0F`: cmp at 0x12230 equal → INTERIM branch → r1 = 0x0F via movs at 0x12238 (unchanged by M6) → wire 0x0F ✓
+- `r2 = 0x0D`: cmp ≠ → CHANGED branch → M6 NOP → r1 retains 0x0D from ldrb at 0x1222e → wire 0x0D ✓ (production-equivalent)
+
+M6 is a pure no-op for the existing call sites; only changes wire behaviour when a caller deliberately passes a non-0x0F-and-non-0x0D value.
+
+### Step 1 commit: M6 alone (no T8 changes)
+
+Commit lands M6 only — single-byte patch at mtkbt file offset `0x12244` (`0d 21 → 00 bf`). No JNI / T8 changes. Production wire behaviour is byte-identical to pre-M6 for every CT in the matrix.
+
+Verification predictions:
+- TV / Sonos / Kia / Bolt / Pixel: no wire-level change. Metadata-pane, PASSTHROUGH, position cadence — all identical to pre-M6.
+- mtkbt MD5 change confirms the M6 byte landed.
+
+If any post-flash regression appears, M6 is wrong and reverts with a one-byte change. Step 2 (T8 r2-value change to 0x08 for events 0x09-0x0C) lands only after Step 1 is verified clean on all CTs.
+
+## Trace #61 (2026-05-18) — M6 Step 1 verified clean on all 4 CTs; Step 2 (T8 r2=0x08 for events 0x09-0x0C) landed
+
+### Step 1 verification
+
+Post-flash captures against the M6-only build (mtkbt MD5 `7493acdad352bc6d7f6d65fc3251e221`):
+
+| CT | Capture | BluetoothAvrcpService restarts | T8reg events | Notes |
+|---|---|---|---|---|
+| Sonos | `dual-sonos-20260518-1656` | 0 | `01×5, 08×1, 09×9, 0b×1, 0c×1` | parallel-subscription pattern intact; 4×T5emit, 4×T9emit, 61×M5wire |
+| TV | `dual-tv-20260518-1705` | 0 | `01×3, 08×1, 09×3, 0b×1, 0c×1` | standard TV pattern; 127×M5wire, heavy T4a= GEA traffic |
+| Bolt | `dual-bolt-20260518-1726` | 0 | `01×43` only (cursor parked in Phase 1; session ended before advancing) | 5×T9emit, 1×T5emit, 73×M5wire |
+| Kia | `dual-kia-20260518-1730` | 0 | `01×1, 05×1, 08×1, 09×1, 0a×1, 0b×1, 0c×1` | parallel initial burst; 110×M5wire, GEA heavy |
+
+mtkbt PID (145) and Bluetooth service PID (697) stable across every session — no process churn. M6 confirmed byte-identical pass-through for production traffic (every current `reg_notievent_*_rsp` call passes `r2 ∈ {0x0F, 0x0D}`, and M6 only diverges from stock when `r2 ∉ {0x0F, 0x0D}`).
+
+### Bolt's no-metadata observation in `dual-bolt-20260518-1726`
+
+The Bolt session showed `T5emit aid=aacf122a` at 17:25:20 (Y1 emitted TRACK_CHANGED CHANGED on the wire) but **no GetElementAttributes query from Bolt followed**. Per AVRCP 1.3 §6.7.1 a CT receiving CHANGED is required to re-register `ev=02` and re-query GEA for the new track. Bolt did neither.
+
+Cross-checked via CPU-state diff: M6 produces identical `r1 / r2 / flags` at the `bl 0x11894` boundary for `ipc[8] = 0x0D` (the value T5emit's helper writes). Wire byte is `0x0D` pre- and post-M6 — same as every prior production CHANGED frame. This is the same intermittent Bolt-side state-machine gap previously observed in `dual-bolt-20260518-1507` ("first few tracks worked, then broke"). Independent of M6.
+
+### Step 2 — T8 r2-value change for events 0x09-0x0C
+
+`_emit_t8`'s arms for events 0x09 / 0x0a / 0x0b / 0x0c in `_trampolines.py` now call their `reg_notievent_*_rsp` PLT helpers with `r2 = REASON_NOT_IMPLEMENTED (0x08)` instead of `r2 = REASON_INTERIM (0x0F)`. Side effects:
+
+- Helper writes `ipc[8] = 0x08` (instead of `0x0F`).
+- Mtkbt's M1 + M6 dispatch reads `ipc[8] = 0x08`, post-M1 cmp fails (`!= 0x0F`), CHANGED branch entered, post-M6 NOP keeps `r1 = 0x08` from the prior `ldrb`.
+- `fcn.0x11894` stores `r1 = 0x08` to `packetFrame[0xb]`; `packetFrame[9] = 0` (response, ctype > 6).
+- `fcn.0xf0bc` `cbz packetFrame[9], 0xf186` taken → Path B (same path INTERIM/CHANGED takes in production).
+- `fcn.0xef08` writes `wire_buf[0] = packetFrame[0xb] = 0x08`.
+- Wire frame goes out with AV/C ctype `0x08` NOT_IMPLEMENTED.
+
+The `_emit_subscription_write(a, 1, 20, ...)` previously in `t8_check_9` (armed `state[20]` sub_now_playing_content) is removed — a CT that receives NOT_IMPLEMENTED is required not to re-register, so the gate is intentionally never armed. The T5 / T9 CHANGED-emit branches gated on `state[20]` remain in code but become unreachable (gate permanently zero); their PLT calls are dead but harmless.
+
+### Predicted behaviour changes per CT after Step 2
+
+- **Sonos / TV / Kia / Pixel-ref** (parallel-subscription model): they currently send `RegisterNotification(0x09)` (and 0x0a/0x0b/0x0c) speculatively and never receive a CHANGED for those events. With Step 2 they receive AV/C ctype `0x08` NOT_IMPLEMENTED on the response, drop those event_ids from their retry set per §6.7.1, and stop re-registering them. Net wire effect: less retry traffic, no change to ev=01/02/05/08 cadence (the events Y1 actually drives).
+- **Bolt** (sequential-cursor model): when the cursor reaches ev=09/0a/0b/0c, it receives NOT_IMPLEMENTED, drops the event, and advances. Cursor returns to ev=01/02/05 which Y1 fires CHANGED for. The intermittent Bolt-side "skip GEA after CHANGED" gap is *not* addressed by Step 2 (that's a separate Bolt-side state-machine issue, independent of M6).
+
+### Patcher state
+
+- `patch_mtkbt.py`: unchanged from Step 1.
+- `patch_libextavrcp_jni.py`: OUTPUT_MD5 `d803f42c` → `637e2f18d7947511c0ab0d4a78ea7003`. OUTPUT_DEBUG_MD5 `4995ca17` → `bbec7d68b70ca7973d1e2a14b8dd5fd2`.
+- New `REASON_NOT_IMPLEMENTED = 0x08` constant in `_trampolines.py` alongside `REASON_INTERIM` / `REASON_CHANGED`.
+
+## Trace #62 (2026-05-19) — TRACK_CHANGED Identifier: audio_id BE u64 → 0x00*8 per AVRCP 1.3 §6.7.2 (Bolt's polling-only lag closed)
+
+### Cross-CT latency table — T5emit → next T4a
+
+After Step 1+2 + the T2reg debug log (commit `76bd5ed`), per-CT response time from `T5emit` (TRACK_CHANGED CHANGED on the wire) to the CT's next `T4a=00010xxx` (first attribute of the GEA response for the new track) across all four CTs in `dual-*-20260518-{1811,1814,1907,1940}`:
+
+| CT | T5emit → next T4a | Status |
+|---|---|---|
+| TV   | 110 ms | interrupt-driven ✅ |
+| Kia  | 1020 ms | interrupt-driven ✅ |
+| Sonos | 17–29 ms | interrupt-driven ✅ |
+| Bolt | **22,046 ms** | **polling-driven ❌** |
+
+Bolt's gap was structural — every prior Bolt session in `/work/logs/dual-bolt-*` showed the same 20–30 s lag between `T5emit` and the next GEA query, consistent with Bolt's RegisterNotification re-subscribe cadence of ~3 s and GEA refresh cadence of ~21 s (Bolt's "safety polling" timer, independent of CHANGED notifications on the wire).
+
+The `T2reg ev=02` log added in commit `76bd5ed` confirmed Bolt **does** receive each CHANGED — Bolt re-subscribes within 1 s of `T5emit`. So the AVCTP transaction completes successfully; what fails is Bolt's metadata-refresh trigger. That points to packet-payload semantics, not transport.
+
+### Root cause: §6.7.2 Identifier divergence (long-pending fix from Trace #41-ish hypothesis)
+
+The wire-level `Identifier` field in `TRACK_CHANGED` carries 8 bytes. AVRCP 1.3 §6.7.2 mandates:
+
+> "For TG conforming to AVRCP 1.3, the Identifier shall always be set to 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00."
+
+The trampoline was emitting the per-track audio_id (BE u64 from `y1-track-info[0..7]`) at all three emit sites — a Trace #32-era optimization premised on "Strict 1.4+ CTs cache `GetElementAttributes` keyed by Identifier; a per-track id forces refresh." That premise is a 1.4+ Browseable Player extension, not a 1.3 contract. Per-frame evidence across the four CTs falsifies it: TV / Kia / Sonos all re-query GEA within 1 s of CHANGED regardless of Identifier value (their parsers ignore it). Bolt, being strict-1.3, silently drops CHANGED carrying non-zero Identifier and falls back to polling.
+
+This hypothesis was documented in the older "Strongest remaining hypothesis: TRACK_CHANGED Identifier divergence" section earlier in this file (Trace #41-ish era) and marked as the "Best first move (low-cost, low-risk)" follow-up, but never executed — superseded at the time by M5 / M6 / Step 2 work. With those landed, this fix becomes the natural next move.
+
+### Patch
+
+`_trampolines.py`:
+
+- New 8-byte data const `selected_track_id` in the data section after `path_papp_set`. Referenced by all three `track_changed_rsp` emit sites.
+- T4 reactive CHANGED (line 444): `add_sp_imm(3, T4_OFF_FILE_TID)` → `adr_w(3, "selected_track_id")`.
+- extended_T2 INTERIM (line 757): `add_sp_imm(3, T2_OFF_TID)` → `adr_w(3, "selected_track_id")`.
+- T5 proactive CHANGED (line 943): `add_sp_imm(3, T5_OFF_FILE_TID)` → `adr_w(3, "selected_track_id")`.
+
+Each instruction site grows by 2 bytes (T1 ADD-SP-imm = 2 B → T3 ADR.W = 4 B); the new const is 8 B + 4 B align. Net trampoline-blob growth: +14 B, well within the LOAD #1 padding budget.
+
+`state[0..7]` and `file[0..7]` still carry the per-track audio_id for trampoline-internal edge detection — only the wire payload changes.
+
+### Patcher state
+
+- `patch_libextavrcp_jni.py`: OUTPUT_MD5 `637e2f18` → `5d1e0fcf1b4049fcc4c96dc0e8077acf`. OUTPUT_DEBUG_MD5 `b1ab1ca5` → `8c427734bcb7887bc4a38fbd006726cd`.
+- `patch_mtkbt.py`: unchanged.
+
+### Verification plan
+
+Post-flash capture from Bolt expected to show `T5emit aid=…` → `T4a=00010xxx` delta < 1 s (parity with TV / Kia / Sonos). If the delta is still > 5 s, the §6.7.2 hypothesis is wrong and we revisit — likely candidates: PLAYBACK_STATUS_CHANGED-as-refresh-trigger (Bolt fetched Track 1 GEA 2.8 s after `T9emit pstat=2`), or AVCTP framing differences. TV / Kia / Sonos expected byte-identical refresh behaviour to current build (their parsers ignore Identifier).
+
+
+
+## Trace #64 (2026-05-19) — c85ed7b reverted: Step 2 revert OK in release, but added debug-log site pushed debug blob past LOAD #1 budget → Sonos SIGSEGV loop
+
+### What happened
+
+Commit `c85ed7b` reverted Step 2 (good — INTERIM-acks ev=0x09..0x0c, arms `state[20]` for the NowPlayingContent CHANGED emit). The substantive change is correct and aligns Y1 with Pixel-as-TG behaviour.
+
+The same commit also added a `T5ncc ev=09` debug log at the new T5 NowPlayingContent emit site (inline `_emit_native_log_u32` + a `log_fmt_t5ncc` asciiz format string in the trampoline data section). These additions, combined with the `_emit_subscription_write(a, 1, 20, ...)` inline expansion (~50 bytes), grew the debug-build trampoline blob from 4008 bytes (commit `91c7b36`) to **4104 bytes**.
+
+The LOAD #1 padding budget on this binary is hard-capped at `0xbc08 - 0xac54 = 4020 bytes` — LOAD #2's file offset starts at 0xbc08. Writing past that overwrites LOAD #2's first bytes, which are part of `.data`/`.got`. The dynamic linker maps those bytes into the GOT; corrupting them causes the next PLT call (or GOT-relative access) to SIGSEGV.
+
+`dual-sonos-20260518-2024` showed `com.mediatek.bluetooth` SIGSEGV-looping every ~350 ms: `BluetoothAvrcpService Constructor enable → +JNI_OnLoad → -JNI_OnLoad: 65540 → +classInitNative → (crash)`. dmesg confirms `sig 11 to [iatek.bluetooth]` per restart. The release build was safe (3800 bytes, 220 bytes headroom) but the user habitually flashes with `KOENSAYR_DEBUG=1`.
+
+### Why the patcher didn't catch it
+
+`patch_libextavrcp_jni.py`'s pre-patch site verification (`verify("before")`) is *bypassed on the happy path* — it only runs when `--skip-md5` is set or `EXPECTED_OUTPUT_MD5` is None. With OUTPUT_DEBUG_MD5 pinned to the corrupted build's MD5 (`8e314521…`), the patcher produces the corrupted output → MD5 matches the pin → patcher reports success.
+
+### Fix
+
+1. Revert `c85ed7b` (commit `[revert hash]`). Restores 91c7b36 state — §6.7.2 fix in place, Step 2 still active for now.
+2. Add a hard `AssertionError` in `patch_libextavrcp_jni.py::build_patches()` that fires when `len(blob) > LOAD2_FILE_OFFSET - LOAD1_OLD_SIZE = 4020 bytes`. Future debug-log additions that overflow the budget will now fail loudly at patcher-run time, before any binary is written.
+
+### Path forward
+
+The Step 2 revert + `state[20]` arm + `T5 NowPlayingContent CHANGED` emit are still the right substantive fix for Bolt's lag (see Trace #63 cross-CT comparison). The smaller re-land needs to fit within the 4020-byte budget at debug. Current debug blob is at 4008 bytes — only 12 bytes of headroom. Any new debug log site (~30-38 bytes) must be paired with shrinking elsewhere:
+
+- Drop one of the older logs that's no longer load-bearing (e.g. `T9tid c17` — M5 TID-echo has been verified end-to-end, the log was diagnostic-only for that landing).
+- Or consolidate format strings: replace per-site asciiz with a unified `"Y1T %s ev=%02x"` and pass per-site short tag strings.
+- Or shift the LOAD #1 padding boundary by re-laying out the ELF (high-risk, deferred).
+
+The Step 2 revert is re-landable without any *new* debug log if we accept that the chain verification has to happen via existing `T8reg ev=09` logs alone.
+
+## Trace #65 (2026-05-19) — Step 2 revert re-landed in budget-aware shape
+
+c85ed7b reverted the NOT_IMPLEMENTED reject for ev=0x09-0x0c back to INTERIM acks (correct fix per Trace #63's Pixel comparison) but pushed the debug-build trampoline blob to 4104 bytes, 84 over the 4020-byte LOAD #1 budget. Reverted in 806fb4b which also added a hard `AssertionError` in `patch_libextavrcp_jni.py::build_patches()` to catch any future overflow.
+
+This trace re-lands the substantive Step 2 revert (T8 INTERIM-acks ev=0x09-0x0c + arms state[20]) within budget by dropping two debug log sites that have served their diagnostic purpose:
+
+- **`T2reg ev=02`** (added 76bd5ed) — verified that the CT in question subscribes to TRACK_CHANGED. Confirmed. Removed.
+- **`T9tid c17=%02x`** (added Trace #59 era) — paired with `M5wire c39` to verify M5 TID-echo end-to-end through the JNI response builder. M5 verified live; the standalone `T9tid` site is no longer load-bearing for ongoing investigations. Removed.
+
+A new debug log site lands in T5's NowPlayingContent CHANGED emit:
+
+- **`T5ncc`** — no-arg format string (saves ~10 bytes vs the per-event `%02x` formats). Fires once per track edge when state[20] is armed. Absence after `T5emit` in a session means the CT never subscribed to ev=0x09 — diagnostic for the gate-arm chain.
+
+### Final blob sizes
+
+| Build | Bytes | Headroom |
+|---|---|---|
+| Release | 3800 | 220 |
+| Debug   | 4016 | 4 |
+
+Debug headroom is razor-thin (4 bytes); any future debug-log addition needs to drop or consolidate an existing site. The patcher's AssertionError safety net will fail loudly if a future change drives the blob over 4020.
+
+### Patcher state
+
+- `patch_libextavrcp_jni.py`: OUTPUT_MD5 `5d1e0fcf` → `da7225fd2ba79f99461b4fba641fcad1`. OUTPUT_DEBUG_MD5 `8c427734` → `326aa703106d645274fb8416d8cc438e`.
+- `patch_mtkbt.py`: unchanged (M1+M6 still in place; pass-through for `r2 ∈ {0x0F, 0x0D}`).
+
+### Verification plan
+
+KOENSAYR_DEBUG=1 build, post-flash:
+
+```bash
+grep -E 'Y1T.*(T8reg ev=09|T5ncc|T5emit|T4a=0001)' logcat.txt
+```
+
+Expected per track edge on a CT subscribed to ev=0x09:
+1. `T8reg ev=09` — CT subscribes (or re-subscribes after a previous CHANGED).
+2. (track changes) `T5ncc` — Y1 emits NowPlayingContent CHANGED.
+3. `T5emit aid=…` — Y1 emits TrackChanged CHANGED.
+4. `T4a=00010xxx` (≤ 1 s later) — CT's interrupt-driven GEA refresh.
+
+If `T8reg ev=09` is missing entirely, the M1+M6 dispatch isn't routing the INTERIM ack on the wire (or the CT is rejecting our INTERIM as malformed). If `T5ncc` is missing after `T8reg ev=09`, state[20] isn't actually getting armed — trace into `_emit_subscription_write`'s open/lseek/write/close path. If everything fires and CT still doesn't refresh, the issue is downstream (likely the PlaybackStatus CHANGED burst element Pixel emits that we don't — deferred until evidence shows it's needed).
+
+### Sonos restart-loop verification
+
+The c85ed7b revert (806fb4b) restored Sonos boot. This re-land keeps release-build bytes structurally identical to 806fb4b plus the `_emit_subscription_write` expansion (50 bytes), well inside the 220-byte release headroom. No new LOAD #2 overlap risk.
+
+## Trace #66 (2026-05-19) — M5's coincident-match was masking a TID-echo gap; M7 lands
+
+### Discovery
+
+Post-252cd8a (Step 2 revert re-landed), the Sonos / TV / Bolt / Kia matrix gave a clean per-CT comparison:
+
+| CT | `T8reg ev=09` count | re-subscribe pattern | `M5wire c39` distribution |
+|---|---|---|---|
+| Sonos 2125 | 6× | re-subscribes within 11 ms of CHANGED | 100% TID=0 (36 frames) |
+| TV 2135    | 4× | re-subscribes within 15–200 ms      | 100% TID=0 (27 frames) |
+| Kia 2157   | 1× | one-shot subscription               | 100% TID=0 (134 frames) |
+| Bolt 2159  | 1× (then ev=0a retry-storm 10×, ev=01 retry-storm 10×, ev=05 retry-storm 12×, ev=08 retry-storm 8×) | retries every 3 s and gives up after ~10× | **87% TID=0, 13% non-zero** (1, 3, 4, 5, 6, 6, 7, 8, 8, 9, 9, c, d in 98 frames) |
+
+Bolt's per-event retry-storm is the AVCTP V13 §3.3.5 / §6.5 retry timer firing because the response TID didn't echo the inbound CMD TID. mtkbt btlog confirms inbound `transId:N` with N ∈ {3, 6, 7, 8, 9, 12, 13} during the same window; the outbound responses go with `M5wire c39=0` on every `T8reg ev=01` retry. Three other matrix CTs use TID=0 exclusively and accidentally match — the "M5 verified" claim from Trace #59 was a coincident-match artifact, not a real verification (the falsifying evidence is the cycling-TID CT, per `feedback_verify_before_inferring.md`).
+
+### Why M5 specifically fails for RegNotif responses
+
+`libextavrcp.so::AVRCP_SendMessage` (called from every `btmtk_avrcp_send_reg_notievent_*_rsp` helper) passes `msg_id = 0x220` (= 544) to `BT_SendMessage`. The msg=544 path's IPC allocator does *not* set `packet[+8] = 1` the way `fcn.0x11894:0x11908` does for "normal" outbound packets. M5's discriminator (`cmp r2, 1; beq skip`) misclassifies the msg=544 packet as inbound, fires the original `strb.w r0, [r4, 0x29]`, and writes `packet[+0xd] = 0` (allocator-zeroed) to `chan+0x39`. The wire builder at `fcn.0xae418:0xae448` reads `chan+0x39` and emits AVCTP byte 0 with TID nibble = 0.
+
+Other AV/C response paths (GetCapabilities / GetPlayStatus / GetElementAttributes / PASSTHROUGH) route through different msg IDs whose allocators do set `packet[+8] = 1`, so M5's discriminator works correctly for them. This is why the Bolt 2159 capture shows non-zero `c39` values clustered outside the RegNotif response windows.
+
+### M7: unconditional sync after M5's branch
+
+The fix extends the M5 cave at `0xf3680` from 16 to 24 bytes. After M5's conditional `strb`, the cave loads the per-channel inbound-RX TID stash slot at `chan+0xba9` (latched by `fcn.0x11374:0x11436 strb.w sl, [r4, 0xba9]` on every inbound AV/C cmd) and unconditionally writes it to `chan+0x39`. The wire-frame builder at `fcn.0xae418:0xae448` then always reads the correct echo TID, regardless of which IPC allocator originated the response packet.
+
+Cave layout (24 bytes at `0xf3680`):
+
+```
+0xf3680  68 7b           ldrb r0, [r5, 0xd]        ; M5: original 1st insn
+0xf3682  2a 7a           ldrb r2, [r5, 8]           ; M5: discriminator
+0xf3684  01 2a           cmp r2, 1                   ; M5: outbound = 1
+0xf3686  01 d0           beq 0xf368c                 ; M5: skip strb on outbound
+0xf3688  84 f8 29 00     strb.w r0, [r4, 0x29]      ; M5: original 2nd insn (inbound only)
+0xf368c  94 f8 99 0b     ldrb.w r0, [r4, 0xb99]     ; M7: load chan+0xba9 (inbound-RX TID stash)
+0xf3690  84 f8 29 00     strb.w r0, [r4, 0x29]      ; M7: sync chan+0x39 unconditionally
+0xf3694  79 f7 7a bd     b.w 0x6d18c                ; return into Path B
+```
+
+For inbound (`beq` not taken), M5 writes `packet[+0xd] = TID` to `chan+0x29 = chan+0x39`, then M7 re-writes the same value from `chan+0xba9` — idempotent. For outbound (`beq` taken), M5 preserves whatever was at `chan+0x39`, then M7 forces it to `chan+0xba9` (latest inbound TID). For the broken msg=544 outbound path (where M5 mis-fires `strb` and writes 0), M7's unconditional copy overwrites the 0 with the correct TID.
+
+### LOAD #1 budget
+
+mtkbt has 1748 bytes of LOAD #1 padding budget (0xf3d40 − 0xf366c). The cave grew from 16 to 24 bytes; total mtkbt usage including the D1 debug cave still well under budget. `LOAD1_RELEASE_END` updated `0xf3690 → 0xf3698`.
+
+### Patcher state
+
+- `patch_mtkbt.py`: OUTPUT_MD5 `7493acda` → `9c4e462241169c3a181574db157c8df7`. OUTPUT_DEBUG_MD5 `d603e68a` → `03da20024a8bc750f0c60ab4f828de2f`.
+- `patch_libextavrcp_jni.py`: unchanged from 252cd8a.
+
+### Verification plan
+
+Post-flash, the gold standard test is Bolt (the only cycling-TID CT in the matrix). Expected behaviour change:
+
+1. `T8reg ev=01` followed by `M5wire c39=NN` where NN ≠ 0 — TID echoes Bolt's inbound cmd TID.
+2. No more 3-second retry-storm on ev=01 / 05 / 08 / 0a — Bolt sees the response, transitions to "subscribed", waits for CHANGED.
+3. `T5ncc` and `T5emit aid=` fire on track edges; Bolt re-subscribes ev=09 / 02 within ~15 ms (the spec-correct §6.7.1 pattern observed on Sonos/TV/Kia).
+4. `T4a=00010xxx` (GEA query) follows the CHANGED burst within < 1 s — interrupt-driven refresh, parity with the Pixel-4-as-TG reference latency table.
+
+Sonos / TV / Kia byte-identical wire behaviour (their TIDs were already 0, so M7's unconditional copy of `chan+0xba9 = 0` produces the same wire bytes as pre-M7). No regression expected on the working CTs.
+
+### Why Trace #59 missed this
+
+`T9tid c17` was the only TID-source log site; it surfaced `conn[+17]` (which IS the inbound TID, correctly latched JNI-side) but the matching `M5wire c39` always read 0 on Sonos because Sonos's inbound TID was 0. The "match" was structural coincidence. Memory `architecture_y1_m5_regnotif_gap.md` documents the verification path forward — cycling-TID CTs (Bolt, Kia under different conditions, future captures) are required for any future TID-related claim.
+
+## Trace #67 (2026-05-19) — M7 sync visible but ineffective; D2 multi-value log added to disambiguate
+
+### What we know after fe974f2 + 252cd8a
+
+The M5+M7 cave at `0xf3680` is correctly assembled (verified byte-for-byte in the patched binary) and the wire-builder reads from `chan+0x39` (per the `M5wire c39=%02x` log site, which always fires once per outbound AVCTP frame at `fcn.0xae418:0xae448`). Yet the post-M7 Bolt session (the brief 0724 capture that actually showed metadata for 3 songs before wedging) still indicates `c39=0` on the RegNotif response paths — same as the pre-M7 captures.
+
+This means *either* M7's source slot `chan+0xba9` is 0 at the moment the cave runs, *or* M7's write to `chan+0x39` is being overwritten between cave exit and wire-builder read.
+
+### Static analysis from this session
+
+- `fcn.0x518ac` is mtkbt's per-msg-id dispatcher (called by `fcn.0x67768`). Case `msg=0x208` (= 520, `cmd_frame_ind_rsp`) is the *only* case that calls `fcn.0x11374` → `chan+0xba9 = arg1 = msg[5]`. Other msg IDs (e.g. `msg=0x220` = 544 RegNotif response, `msg=0x21c` = 540 GEA response) go to different handlers that don't latch `chan+0xba9`.
+- `fcn.0xae418` (wire builder) has *two* TID source paths: `chan+0x39` (`[r4, 0x15]`) and `chan+0x38` (`[r4, 0x14]`). The conditional at `0xae43e` (`cbnz r3, 0xae448`) and `0xae442` (`cbz r0, 0xae448`) selects between them based on `[packet, 8]` and `[packet, 0xe]`. Most frames take the `chan+0x39` path (which `M5wire` logs); the `chan+0x38` path is the alternate. Our empirical data confirms `chan+0x39` is the path taken for the RegNotif response frames that Bolt rejects.
+- `fcn.0x6d1a8` is a structural twin of Path B `fcn.0x6d0f0`, with its own strb sites writing `chan+0x28` or `chan+0x29` from `packet[0]` based on `packet[1]`. Only one caller (`fcn.0xf290:0xf348`); probably not on the msg=544 path but a candidate for future investigation if D2 indicates Path B isn't even running.
+
+### Hypothesis the D2 cave is designed to test
+
+The most likely cause is that `msg=520 cmd_frame_ind_rsp` is *not* being emitted by JNI on every inbound CMD — our R1 redirect at `0x6538` diverts inbound dispatch into the T1/T2-stub trampolines, which might short-circuit the normal cmd_frame_ind_rsp path. If so, `chan+0xba9` stays at its initial value (0) for all inbound CMDs, and M7's unconditional copy preserves the 0.
+
+### D2 cave (this trace)
+
+`patch_mtkbt.py` debug build now adds a second cave at `0xf3700` (107 bytes), hooked from the M5+M7 cave's tail b.w at `0xf3694`. D2 fires after M5+M7's stores, with r4 and r5 still holding their cave-entry values (chan+0x10 and packet pointer respectively per AAPCS callee-save). It emits three logs per outbound AVCTP frame:
+
+- **`M5dbg p8=%02x`** — `packet[+8]` (M5's outbound-discriminator byte). Allocator path writes 1 here for outbound IPC; M5's `cmp r2, 1` skips the inbound-strb when this is 1.
+- **`M5dbg pd=%02x`** — `packet[+0xd]` (M5's strb source). Inbound CMD path: this is the inbound TID per Path B's stash-struct semantics. Outbound: allocator-zeroed unless a handler wrote it.
+- **`M5dbg ba9=%02x`** — `chan+0xba9` (M7's source). Set by `fcn.0x11374:0x11436` on `msg=520 cmd_frame_ind_rsp`; M7 syncs `chan+0x39` from here unconditionally.
+
+`M5wire c39=%02x` (from D1, unchanged) continues to log the final wire-side TID.
+
+### Diagnostic table for the next Bolt capture
+
+| `M5wire c39` | `M5dbg p8` | `M5dbg pd` | `M5dbg ba9` | Interpretation |
+|---|---|---|---|---|
+| `00` | `01` | `00` | `00` | M5 thinks outbound (skips strb), M7 source is 0 → either `msg=520` never fired or `fcn.0x11374` isn't reaching the stash slot we expect |
+| `00` | `00` (or non-1) | `00` | `00` | M5 thinks inbound, strb writes 0, M7 source also 0 → same conclusion, plus packet[+0xd] isn't carrying the TID |
+| `00` | `01` | `00` | `NN` (non-0) | M7 source has TID but `chan+0x39` is 0 → M7's write didn't land OR something between M7 and wire-builder clobbered it |
+| `NN` | `01` | `00` | `NN` | Working — M7 sync took effect (this is what we want) |
+| `NN` | `01` | `NN` | `*` | Working without M7 — packet[+0xd] already had TID via some path we haven't seen |
+
+### Patcher state
+
+- `patch_mtkbt.py`: OUTPUT_MD5 `9c4e4622…` (unchanged from fe974f2; release-side bytes are identical). OUTPUT_DEBUG_MD5 `03da20024a8bc750f0c60ab4f828de2f` → `68faa7cfbb5c833d4f55c44ccfa98813`. Adds `LOAD2_FILE_OFFSET` + `LOAD1_BUDGET` constants and a hard `AssertionError` when LOAD #1 end would exceed the LOAD #2 file offset (same safety net `patch_libextavrcp_jni.py` already has). mtkbt headroom: 1748 B budget; current usage 256 B with D1+D2.
+- `patch_libextavrcp_jni.py`: unchanged.
+
+### Verification plan
+
+KOENSAYR_DEBUG=1 build, flash, capture a fresh Bolt session covering connection + several track skips. Grep `Y1T:*` for `M5dbg p8=`, `M5dbg pd=`, `M5dbg ba9=`, `M5wire c39=` and map against the table above. The pattern that fires per-frame tells us exactly where the M7 hypothesis breaks.
+
+## Trace #68 (2026-05-19) — D2 cave first capture: M7 verified working; M5's discriminator is empirically dead code
+
+### What the D2 cave revealed on TV / Sonos
+
+Post-293b382 debug build (mtkbt `68faa7cfbb5c833d4f55c44ccfa98813`), fresh sessions on the two TID=0 / oscillating-TID CTs:
+
+**TV `dual-tv-20260519-0949`** (4008 Y1T lines, 0 restarts):
+
+| log tag | distribution |
+|---|---|
+| `M5wire c39=` | `09` × 402 |
+| `M5dbg ba9=` | `09` × 402 |
+| `M5dbg p8=` | `0xb8` × 402 |
+| `M5dbg pd=` | `0x00` × 402 |
+| `T8reg ev=` | `01` × 4, `08` × 1, `09` × 8, `0b` × 1, `0c` × 1 |
+
+**Sonos `dual-sonos-20260519-0951`** (852 Y1T lines, 0 restarts):
+
+| log tag | distribution |
+|---|---|
+| `M5wire c39=` | `09` × 45, `00` × 80 |
+| `M5dbg ba9=` | `09` × 45, `00` × 80 |
+| `M5dbg p8=` | `0xb8` × 103, `0xea` × 22 |
+| `M5dbg pd=` | `0x00` × 125 |
+| `T8reg ev=` | `01` × 7, `08` × 1, `09` × 14, `0b` × 1, `0c` × 1 |
+
+**Per-frame correlation** (interleaved `M5dbg` + `M5wire` lines fire within the same microsecond, same PID, in this order: `p8` → `pd` → `ba9` → `c39`): `c39 == ba9` in **100% of observed wire frames** across both CTs. M7's unconditional `chan+0x39 = chan+0xba9` is doing exactly what it claimed to do.
+
+### M5's discriminator is empirically dead
+
+The M5 patch (commit `c5e93be`-era) relied on `cmp r2, 1; beq skip_strb` to distinguish outbound IPC (allocator path, `packet[+8]=1`) from inbound (stash struct, `packet[+8]=0xea`). The D2 log of `packet[+8]` shows the value is **never 1** — it's `0xb8` (most frames, both CTs) or `0xea` (Sonos minority). So:
+
+- M5's `beq skip_strb` is never taken.
+- The original strb at `0xf3688` fires every frame.
+- That strb writes `packet[+0xd]` (= `0x00` in 100% of observed frames) to `chan+0x39`.
+- M7's two-instruction tail at `0xf368c..0xf3693` (`ldrb.w r0, [r4, 0xb99]; strb.w r0, [r4, 0x29]`) immediately overwrites with `chan+0xba9`.
+
+**M5's discriminator-based logic was never actually doing anything in production.** Pre-M7, the CTs that "worked" did so by coincident match: M5's broken strb wrote `0` to chan+0x39, and those CTs happened to use TID=0. Bolt cycles TIDs across 0-15 → coincident match fails → 3 s retry storm.
+
+This contradicts the architecture comment in `patch_mtkbt.py` (M5 patch description) and in `docs/PATCHES.md` (the M5 cave disassembly section) that claim M5 discriminates correctly. Both should be updated when next touched.
+
+### chan+0xba9 is not a stable stash — it tracks the latest inbound TID
+
+Sonos's wire-side TID transitions exactly once mid-session (09:49:41 UTC, `ba9: 9 → 0`, ~33 s after `connect_ind`). This corresponds to a legitimate change in the CT's inbound CMD TID, not a bug. The wire echo follows correctly — both `ba9` and `c39` change together at that frame. Subsequent frames stay at `ba9=00` (and `c39=00`).
+
+This means `chan+0xba9` is updated on every inbound CMD (via `fcn.0x11374:0x11436` on msg=520 cmd_frame_ind_rsp). Between inbound CMDs, the value sticks. M7 reads it whenever it runs (on every outbound frame), so the wire TID = most-recently-seen inbound TID.
+
+For RegNotif INTERIM/CHANGED responses (the path Bolt was retry-storming on), this is exactly what AVCTP §3.3.5 strict echo requires — the response TID must match the original cmd's TID. With M7, outbound TID = `chan+0xba9` = the inbound RegNotif's TID. Should work for Bolt too.
+
+### Prediction for the in-flight Bolt capture
+
+We expect:
+
+1. `M5wire c39=NN` matching `M5dbg ba9=NN` on every frame (M7 working).
+2. `NN` covering the range of Bolt's actual inbound TIDs (per the Pixel-as-TG reference btsnoop: 2 for ev=01, 3 for ev=02, 5 for ev=05, 6 for ev=09, 8 for ev=0a, 9 for ev=0b, 0xa for ev=0c).
+3. No 3 s retry storms on ev=01 / ev=05 / ev=0a (which were the post-Trace-#66 symptom).
+4. `T5ncc` firing on every track edge.
+5. GEA queries `T4a=00010NNN` within < 1 s of CHANGED bursts (interrupt-driven refresh).
+
+If the "3 songs then wedge" symptom persists, it's no longer TID-related and we need to look at a different layer (Bolt-side state machine, metadata content edge case, AVCTP fragmentation under sustained traffic, or our state[X] subscription gate clearing logic).
+
+### Patcher state
+
+Unchanged from 293b382: mtkbt OUTPUT_MD5 `9c4e462241169c3a181574db157c8df7` / OUTPUT_DEBUG_MD5 `68faa7cfbb5c833d4f55c44ccfa98813`. patch_libextavrcp_jni.so unchanged from 252cd8a.
+
+## Trace #69 (2026-05-19) — Bolt session: M7 verified on wire but conn[+0x11] is not per-event; per-event TID storage at JNI level is the actual fix
+
+### Bolt 1009 data
+
+`dual-bolt-20260519-1009` (KOENSAYR_DEBUG=1 with the D2 cave from 293b382): 0 restarts, 585 Y1T lines, 4 GEA queries over 3 minutes.
+
+**Per-frame `M5wire c39` distribution shows Bolt's actual cycling TIDs:** `01` × 36, `0c` × 23, `07` × 21, `04` × 9, `0a` × 7, `06` × 7, `03` × 6, `00` × 6, `0f`/`0b`/`09`/`05`/`02` × 1 each. Bolt cycles across the full 0..0xf range — *not* the 100% TID=0 / 100% TID=9 profile of Sonos/TV/Kia.
+
+Per-frame `M5dbg ba9 == M5wire c39` in 100% of observed frames. M7 is working.
+
+**But T8reg subscription counts reveal the structural failure:**
+
+| event | T8reg count | observation |
+|---|---|---|
+| ev=01 | 27 | re-subscribing — works |
+| ev=05 | 16 | re-subscribing — works |
+| **ev=09** | **1** | one subscribe, then `T5ncc` fires 5× without Bolt re-subscribing |
+| ev=0a | 5 | low cadence |
+
+T5ncc × 5, T5emit × 3 — Y1 emitted 5 NowPlayingContent CHANGEDs and 3 TrackChanged CHANGEDs, but Bolt re-subscribed ev=09 zero times.
+
+### Static analysis: where TID actually flows in mtkbt's stock path
+
+Walking the call chain from JNI to wire builder:
+
+1. `libextavrcp.so::btmtk_avrcp_send_*_rsp` at `0x26c0` (NowPlaying) / `0x2458` (TrackChanged):
+   - reads `conn[+0x11]` → TID
+   - writes `msg[5] = TID`
+   - calls `AVRCP_SendMessage(conn, msg=0x220, &msg, msg_size)`
+
+2. mtkbt's IPC dispatcher `fcn.0x67768` → `fcn.0x518ac` (case `0x220` for msg=544) → `fcn.0x12478` (RegNotif sub-dispatcher) → `fcn.0x122cc` (per-event handler for ev=01) / similar → `fcn.0x121d8` (RegNotif response builder, M1+M6 patched) → `fcn.0x11894` (IPC packet allocator).
+
+3. `fcn.0x11894` at `0x11920/0x11928`:
+   ```
+   0x11920: ldrb r0, [r7, 1]   ; r0 = local_buf[+1] = msg[5] = TID
+   0x11928: strb r0, [r4, 0xa] ; packet[+0xa] = TID
+   ```
+
+4. `fcn.0xf0bc` (Path A/B selector) Path B branch at `0xf1a6/0xf1a8`:
+   ```
+   0xf1a6: ldrb r3, [r0, 0xa]    ; r3 = packet[+0xa] = TID
+   0xf1a8: strb.w r3, [r4, 0x31] ; chan+0x39 = TID
+   ```
+
+5. `fcn.0x6d0f0` (Path B, our M5+M7 cave hooks here): M5 writes 0 to chan+0x39 (strb always fires since `p8 ≠ 1`); M7 unconditionally rewrites chan+0x39 from chan+0xba9.
+
+6. `fcn.0xae418:0xae448` (wire builder): `ldrb r6, [r4, 0x15]` = chan+0x39 (post-M7 value).
+
+**So mtkbt's *stock* path was always writing the right TID to chan+0x39.** Step 4's `strb.w r3, [r4, 0x31]` is the real TID-echo mechanism. The M5 patch (commit `c5e93be`-era) mis-identified the failure mode — there was never a missing strb; the wire builder was already getting the JNI-provided TID via `msg[5]` → `packet[+0xa]` → `chan+0x39`.
+
+**Our M5+M7 cave is functionally redundant** with `fcn.0xf0bc:0xf1a8`. For most cases, M7's `chan+0xba9` source equals `packet[+0xa]` (both = latest inbound CMD TID), so M7 rewrites chan+0x39 to the same value. No harm but no value either.
+
+### The actual bug: `conn[+0x11]` is per-connection, not per-event
+
+`conn[+0x11]` in libextavrcp.so is the slot that JNI reads at every response-builder call. It's updated by the inbound-CMD path on every inbound AV/C cmd. So:
+
+- **INTERIM response** (immediate, in the same JNI dispatch context as the inbound RegNotif): `conn[+0x11]` = RegNotif's TID. ✓
+- **CHANGED response** (async, fired later from a music-app broadcast): `conn[+0x11]` = whatever the *most recent inbound CMD's* TID is, not the originating RegNotif's TID.
+
+For Bolt's TID-cycling pattern:
+- ev=01 / ev=05 CHANGEDs fire on tight loops (play-status edge / 1s position tick) — `conn[+0x11]` hasn't rotated between RegNotif and CHANGED.
+- ev=02 / ev=09 CHANGEDs fire on sparse track-edges — many intervening inbound CMDs rotate `conn[+0x11]`. Wire emits wrong TID. Bolt rejects.
+
+This is why Bolt's metadata pane updated for 3 songs (the runs where conn[+0x11] happened to still match the original RegNotif's TID at emit time) then wedged.
+
+### The fix: re-purpose subscription-gate bytes to store TID+1
+
+State file at `/data/data/com.innioasis.y1/files/y1-trampoline-state` currently uses bytes 13..20 as 0/1 subscription gates:
+
+| byte | event | currently | new semantics |
+|---|---|---|---|
+| state[13] | ev=05 sub_pos | 0/1 | 0 = not subscribed, 1..16 = TID+1 |
+| state[14] | ev=01 sub_play_status | 0/1 | same |
+| state[15] | ev=08 sub_papp | 0/1 | same |
+| state[16] | ev=02 sub_track_changed | 0/1 | same |
+| state[17] | ev=03 sub_track_reached_end | 0/1 | same |
+| state[18] | ev=04 sub_track_reached_start | 0/1 | same |
+| state[20] | ev=09 sub_now_playing_content | 0/1 | same |
+
+Existing gate checks (`cmp r0, 0; beq skip`) still work — state byte is nonzero when subscribed regardless of TID value.
+
+At INTERIM-emit sites (T8 arms + extended_T2's ev=02 INTERIM): instead of `_emit_subscription_write(a, 1, ...)`, save `conn[+0x11] + 1` to the state byte. The +1 encoding allows TID=0 to be distinguishable from "not subscribed".
+
+At CHANGED-emit sites (T5 NCC, T5 TrackChanged, T9 NCC): after the existing gate check (r0 now contains TID+1), subtract 1 and write to `conn[+0x11]` (= `[r4, 0x19]` where r4 = struct ptr in T5/T9). Then mtkbt's stock path picks up `conn[+0x11]` via `msg[5]` → `packet[+0xa]` → `chan+0x39`.
+
+Cost per site:
+- INTERIM: +2 bytes (ldrb + adds before the modified _emit_subscription_write)
+- CHANGED: +4 bytes (subs + strb inside the gate-check block)
+
+Narrow scope (ev=02 + ev=09 only, the wedge events): ~16 bytes of code growth.
+
+### Budget
+
+Debug build is at 4016 / 4020 bytes (4 bytes headroom — extremely tight). To fit 16 bytes of growth, drop one debug-log site that's no longer load-bearing:
+
+- `T9emit pos=%u` — least critical now that mtkbt-side `M5wire c39` covers wire-emit timing. Removing saves ~38 bytes (format string + inline emit).
+
+Net debug after change: 4016 - 38 + 16 = **3994 bytes (26 byte headroom)**.
+Net release after change: 3800 + 16 = **3816 bytes (204 byte headroom)**.
+
+### What about ev=01 / ev=05 / ev=08?
+
+ev=01 has 27 re-subscribes — already working. Same for ev=05 (16) and ev=08 (1). These have fast-enough CHANGEDs that conn[+0x11] doesn't rotate. **Leave them out of scope for the narrow fix**; revisit if the next Bolt capture shows residual issues.
+
+### Optional follow-up: simplify the M5+M7 cave
+
+Once per-event TID is in place, `fcn.0xf0bc:0xf1a8` writes the correct TID and M5+M7 just rewrite it to a stale value. M5+M7 could be removed entirely (revert `0x6d186` to stock ldrb+strb, drop the cave, drop the LOAD #1 filesz extension). Defer — non-load-bearing cleanup. Document the new understanding in `patch_mtkbt.py` comments when next touched.
+
+## Trace #70 (2026-05-19) — Bolt 1053 reveals M7 was breaking the per-event TID fix; M5 discriminator corrected to use packet[+0xd], M7 removed
+
+### Bolt 1053 outcome of commit 705f145 (per-event TID save/restore at JNI side)
+
+`dual-bolt-20260519-1053` with patched libextavrcp_jni.so (`3dfc20d6…`) and mtkbt (`68faa7cf…`): 0 restarts, 552 Y1T lines, but:
+
+- ev=09 subscribed once at `10:53:42.822` — **still** never re-subscribed.
+- `T5ncc` × 5 (most before Bolt even subscribed to ev=09 — state[20] persisted across boots with legacy `byte_value=1` encoding from a previous flash).
+- `M5wire c39` on the 5 `T5ncc` emits: `05` and `0a` — matching the latest inbound CMD TID at that moment, **not** the saved per-event TID.
+
+Per-frame `M5dbg`:
+```
+10:52:17.018  M5wire c39=09   (some inbound CMD at TID=9)
+10:52:17.031  M5wire c39=0a   (next inbound CMD at TID=0xa, chan+0xba9 updated)
+10:52:17.357  T5ncc           ← JNI: state[20] = X, conn[+0x11] = X-1
+10:52:17.358  M5wire c39=0a   ← but wire emits TID=0a, not X-1
+10:52:17.359  T5emit aid=d9e5d5e5
+10:52:17.359  M5wire c39=0a
+```
+
+### Root cause: M7's unconditional sync overrides fcn.0xf0bc's correct TID write
+
+Walking the post-fix outbound flow:
+
+1. T5 NCC trampoline reads `state[20]`, computes `r0 = state[20] - 1` (saved TID), writes to `conn[+0x11]`. ✓
+2. JNI's `reg_notievent_now_playing_content_rsp` reads `conn[+0x11]` = saved TID, writes `msg[5] = saved TID`. ✓
+3. `AVRCP_SendMessage` forwards `msg=544` to mtkbt.
+4. mtkbt's `fcn.0x11894:0x11928`: `packet[+0xa] = msg[5] = saved TID`. ✓
+5. `fcn.0xf0bc:0xf1a8`: `chan+0x39 = packet[+0xa] = saved TID`. ✓
+6. **M5+M7 cave runs at `0x6d186` → 0xf3680:**
+   - M5's `cmp r2, 1` checks `packet[+8]`. Empirically `p8 = 0xb8` (outbound) or `0xea` (inbound), **never `1`**. M5's `beq skip` is never taken → original `strb.w r0, [r4, 0x29]` always fires.
+   - That strb writes `chan+0x39 = packet[+0xd]`. For outbound, `packet[+0xd] = 0` (allocator-zeroed). chan+0x39 := 0 — wipes out the saved TID.
+   - M7's `ldrb.w r0, [r4, 0xb99]; strb.w r0, [r4, 0x29]` then unconditionally syncs `chan+0x39 = chan+0xba9` (latest inbound CMD's TID). ✗ — overwrites the saved TID with the wrong one.
+7. `fcn.0xae418:0xae448` wire builder reads `chan+0x39` = latest inbound TID. Wire emits wrong TID. Bolt rejects.
+
+**M7 was added in fe974f2 as a "fix" for what was actually a bug *in our own* M5 cave — M5's `cmp r2, 1` never matched, so M5's strb fired on every outbound and clobbered `chan+0x39` with 0. M7 papered over that by overwriting with `chan+0xba9` (which happens to match `packet[+0xa]` for FAST outbound responses where conn[+0x11] hasn't rotated). For DELAYED outbound responses (CHANGEDs fired async from broadcasts), `chan+0xba9` carries the latest-inbound-CMD TID, not the saved per-event TID. So M7 actively breaks the per-event fix.**
+
+### The actual fix: M5 discriminator corrected, M7 removed
+
+The cave at `0xf3680` is now 24 bytes (same size, no LOAD #1 filesz change) with the following layout:
+
+```
+0xf3680  68 7b           ldrb r0, [r5, 0xd]       ; load packet[+0xd]
+0xf3682  00 28           cmp r0, 0                 ; outbound = 0 (pd)
+0xf3684  00 bf           nop                        ; padding
+0xf3686  01 d0           beq 0xf368c                ; skip strb on outbound
+0xf3688  84 f8 29 00     strb.w r0, [r4, 0x29]     ; inbound: chan+0x39 = TID
+0xf368c  00 bf 00 bf     2 × nop                    ; was M7 ldrb.w (removed)
+0xf3690  00 bf 00 bf     2 × nop                    ; was M7 strb.w (removed)
+0xf3694  79 f7 7a bd     b.w 0x6d18c                ; return
+```
+
+Discriminator is now `packet[+0xd] == 0` instead of the broken `packet[+8] == 1`:
+- Outbound IPC packets have `packet[+0xd] = 0` (allocator-zeroed at `fcn.0x11894:0x11926`).
+- Inbound CMD stash struct has `r5[+0xd] = chan+0xba9 = inbound TID` (nonzero).
+- Empirically verified across TV / Sonos / Bolt sessions via D2 cave's `M5dbg pd=NN` logs.
+
+Edge case: inbound TID=0 falls into the outbound branch (skip strb). Result: `chan+0x39` not updated from the inbound CMD. But this only matters if an outbound RESPONSE then fires reading `chan+0x39` — and fcn.0xf0bc's outbound path always writes `chan+0x39 = packet[+0xa] = msg[5]` before the wire builder reads it. So the inbound-TID-0 edge case can't actually break wire echo.
+
+With M5 correctly skipping strb on outbound and M7 removed:
+- Outbound CHANGED: fcn.0xf0bc's `chan+0x39 = saved TID` (from JNI per-event fix) survives → wire emits correct TID. ✓
+- Outbound INTERIM: fcn.0xf0bc's `chan+0x39 = current inbound TID` (msg[5] = conn[+0x11], synchronous with the RegNotif) survives → wire emits correct TID. ✓
+- Outbound non-RegNotif (GEA, PASSTHROUGH ack, etc.): same path, conn[+0x11] = current cmd's TID synchronously → wire emits correct TID. ✓
+- Inbound CMDs: original strb still fires, chan+0x39 = inbound TID for subsequent (now-redundant) reads. ✓
+
+### Stale state file from previous sessions
+
+A side observation from Bolt 1053: `T5ncc` fired 5 times *before* Bolt even subscribed to ev=09 (the only `T8reg ev=09` is at 10:53:42, after most `T5ncc` emits). state[20] was nonzero from a previous flash session — the trampoline-state file at `/data/data/com.innioasis.y1/files/y1-trampoline-state` persists across reboots. This is mostly cosmetic now (the cave's strb-skip-on-outbound logic means a stale state[20] with value 1 just produces `conn[+0x11] = 0` for these "phantom" T5ncc emits, which then echoes correctly via fcn.0xf0bc → wire). Not load-bearing for the fix.
+
+### Patcher state
+
+`patch_mtkbt.py`:
+- OUTPUT_MD5 `9c4e4622` → `e466763d12cd516103de05ce4af174b9`
+- OUTPUT_DEBUG_MD5 `68faa7cf` → `0246e82640743f35211cddd84c9ad26f`
+- M5-CAVE entry's `after` bytes changed (4 byte differences: cmp + first NOP + 4 NOPs replacing the M7 ldrb/strb).
+- Debug build's `m5_cave_with_d2_redirect` construction in `build_patches()` updated to match.
+- M5 patch comments and `docs/PATCHES.md` cave-disassembly section updated.
+
+`patch_libextavrcp_jni.py`: unchanged from 705f145 (per-event TID save/restore at JNI side).
+
+### Verification on next Bolt capture
+
+Expected behavior on a fresh state file (delete `y1-trampoline-state` or first-flash):
+1. Bolt subscribes ev=09 — `T8reg ev=09`. JNI saves `state[20] = TID + 1`.
+2. Track edge fires `T5ncc`. JNI reads state[20], writes `conn[+0x11] = saved TID`.
+3. JNI calls rsp builder → mtkbt msg=544 → fcn.0xf0bc writes `chan+0x39 = saved TID`.
+4. Cave runs at 0x6d186 → 0xf3680: packet[+0xd] = 0 (outbound), `beq skip` taken, strb skipped. NOPs. b.w return.
+5. Wire builder reads `chan+0x39 = saved TID`. Emits correct echo TID.
+6. Bolt accepts CHANGED → re-subscribes ev=09 → repeats.
+
+Expected M5dbg pattern: `pd=00` on every outbound (confirms discriminator), `ba9=NN` should still show various values (chan+0xba9 still updated by mtkbt's stash on every inbound CMD — irrelevant now), `c39=NN` should match the saved per-event TID for CHANGED emits.
+
+If c39 still tracks latest inbound TID after this fix, there's a deeper issue we haven't found.
+
+## Trace #71 (2026-05-19) — Bolt 1222: c39=0 in 90/100 outbound frames; conn[+0x11] is empirically not populated by stock JNI's inbound CMD path; per-event TID lives at g_avrcp_req_event_database[event_id] (vaddr 0xd2b5)
+
+### What the logs showed
+
+Bolt 1222 session after the M7-removal + M5-discriminator fix (Trace #70, commit 3b0c628). Trampoline-state file had `state[16]=1` from a previous session (legacy "subscribed yes/no" encoding interpreted by the new TID+1 code as "subscribed with TID=0"). M5wire c39 distribution on outbound frames:
+
+- 90/100 outbound frames: `c39=00`
+- 11/100 frames non-zero — every non-zero is in inbound path (`p8=ea`)
+
+Crucially, ev=09's RegNotif INTERIM ack at 12:21:27.619 had `c39=00`. INTERIM is emitted SYNCHRONOUSLY from within stock JNI's inbound CMD dispatch, so `conn[+0x11]` should hold the inbound TID at that moment per the per-event-TID hypothesis. It didn't.
+
+### What this rules out
+
+The hypothesis "state[N] = conn[+0x11] + 1 at INTERIM-arm time captures the originating RegNotif TID, restorable at CHANGED emit time" (commit 705f145) is empirically false. `conn[+0x11]` is 0 at extended_T2 / T8 entry, so what we were saving was 0+1=1, and at CHANGED time we restored `1-1=0` to conn[+0x11] — shipping the wrong TID on the wire.
+
+### What's actually going on (the JNI RE)
+
+Reverse-engineered stock `libextavrcp_jni.so` (`/work/v3.0.7/system.img.extracted/lib/libextavrcp_jni.so`, MD5 `fd2ce74db9389980b55bccf3d8f15660`):
+
+1. Inbound CMD dispatcher (in the function that handles `MSG_ID_BT_AVRCP_CMD_FRAME_IND`, around file offset `0x6cf0..0x6d58`):
+   - Extracts inbound event_id into `[sp, 0x172]` and seq_id (the AVCTP transId) into `[sp, 0x171]`.
+   - Calls `_Z17saveRegEventSeqIdhh(event_id, seq_id)` at `0x5ee5` via the `bl` at `0x6d26`.
+   - `saveRegEventSeqId` writes `g_avrcp_req_event_database[event_id] = seq_id` (sym 0x5ee4, body):
+     ```
+     0x5ee4  cmp r0, 0xe             ; event_id bounds check
+     0x5ee8  bls 0x5ef8
+     0x5ef8  ldr r2, [literal]       ; PC-relative load of database offset
+     0x5efa  add r2, pc              ; r2 = absolute &g_avrcp_req_event_database
+     0x5efc  strb r1, [r2, r0]       ; database[event_id] = seq_id
+     0x5efe  bx lr
+     ```
+2. `g_avrcp_req_event_database` symbol table entry: vaddr `0x0000d2b5`, size 15 bytes, section [16] `.bss`. Maintained automatically by stock JNI on every inbound RegisterNotification.
+3. `getSavedRegEventSeqId` (sym `0x71f1`) exists but has no xrefs in stock JNI — dead code; the database is read directly via PC-relative addressing at each per-rsp restore site.
+4. Per-rsp restore sites in stock JNI (the canonical pattern):
+   - `notificationTrackChangedNative` @ `0x3bc0`:
+     ```
+     0x3c06  add ip, pc             ; ip = &g_avrcp_req_event_database
+     0x3c0c  ldrb.w r2, [ip, #2]   ; r2 = database[2] (TRACK_CHANGED)
+     0x3c1e  strb.w r2, [r8, 0x19] ; conn[+0x11] = r2  (r8 = avrcp_state; conn = r8+8)
+     ```
+     Then calls `track_changed_rsp`.
+   - `notificationPlayStatusChangedNative` @ `0x3c88`:
+     ```
+     0x3cec  add lr, pc             ; lr = &database
+     0x3cee  ldrb.w ip, [lr, #1]   ; ip = database[1] (PLAYBACK_STATUS)
+     0x3cf2  strb.w ip, [r7, 0x19] ; conn[+0x11] = ip
+     0x3cf6  blx playback_rsp
+     ```
+   - Same pattern in every other `notification*ChangedNative` (10 total in stock JNI).
+5. The `*_rsp` builders in `libextavrcp.so` (file offset `0x23f0` for `reg_notievent_playback_rsp`, `0x2458` for `track_changed_rsp`) read `conn[+0x11]` (`ldrb r3, [r4, #0x11]`) and pack it into `msg[5]` of the outbound IPC frame. From there, mtkbt's `fcn.0xf0bc:0xf1a8` writes `chan+0x39 = packet[+0xa] = msg[5]`, and the wire builder `fcn.0xae418` reads it as the TID nibble.
+
+The TID flow is: inbound CMD → `saveRegEventSeqId(event_id, seq_id)` → `database[event_id] = seq_id` → (later, at any response time) `add ip, pc ; ldrb r2, [ip, #event_id] ; strb r2, [conn, 0x11]` → rsp builder → mtkbt → wire. `conn[+0x11]` is a *transient scratch slot* that stock JNI populates fresh on every rsp call, NOT a persistent inbound-TID stash.
+
+### Why our trampolines didn't pick up the database value
+
+Our T5 / T9 trampolines REPLACE the stock natives at `0x3bc0` / `0x3c88` (the first 4 bytes are overwritten with `b.w T5` / `b.w T9`), short-circuiting the entire stock body including the `database → conn[+0x11]` write. Our extended_T2 / T8 short-circuit the CMD dispatcher and call the rsp builders directly without setting `conn[+0x11]`. So none of our rsp call sites had the database read happening.
+
+### Fix
+
+Every rsp call site in our trampolines now invokes a shared `restore_conn_tid(r0=conn_ptr, r1=event_id)` subroutine inside the trampoline blob. The subroutine does the canonical 14-byte PC-relative dance:
+
+```
+restore_conn_tid:
+  ldr.w r2, [pc, #lit_offset]   ; load PC-relative offset to database
+  add r2, pc                     ; r2 = absolute &g_avrcp_req_event_database
+  ldrb r3, [r2, r1]              ; r3 = database[event_id]
+  strb r3, [r0, #0x11]           ; conn[+0x11] = r3
+  bx lr
+.align 4
+.lit: .word (DB_VADDR - (add_pc_inst + 4))
+```
+
+Subroutine = 16 bytes (12 code + 4 literal). Each call site = 6 bytes (`movs r1, #event_id ; bl restore_conn_tid`). 13 call sites (T4 reactive TC + extended_T2 ev=02 + T5 NCC/Pos/RE_END/TC/RE_START + T8's 11 INTERIM arms + T9's 4 CHANGED emits) × 6 bytes + 16 subroutine = 94 bytes added. Offset by removing the stale `subs r0, #1; strb r0, [r4, 0x19]` TID-restore code in T5/T9 (~10 bytes saved) and the stale `ldrb r0, [r5, 0x19]; adds r0, #1` TID-save in extended_T2/T8 ev=09 (~12 bytes saved). Net add to blob: ~70 bytes.
+
+To fit the debug build under the 4020-byte LOAD #1 padding budget, dropped `T4a=` / `T5emit aid=` / `T9emit pstat=` / `T8reg ev=` log emits and their format strings (~150 bytes total). Kept `T5ncc` (no-arg format) — the load-bearing diagnostic for whether NCC CHANGED actually fires per Bolt's metadata-refresh path. mtkbt-side `M5wire c39=` (D1 cave) covers wire-emit timing for every outbound frame, replacing what the JNI-side per-emit logs were measuring.
+
+Post-fix:
+- Release blob: 3964 / 4020 bytes (56 free)
+- Debug blob: 3992 / 4020 bytes (28 free)
+- OUTPUT_MD5: `a05d8e3208f155e9e8c8c1c0a925eadf`
+- OUTPUT_DEBUG_MD5: `3ddad5af4ce016c79e0ed294582ee8c8`
+
+Sanity-checked via r2 disassembly of the patched blob: `restore_conn_tid @ 0xbae2`, literal at `0xbaf0 = 0x000017cb`; `add r2, pc` at `0xbae6` → `0x17cb + (0xbae6 + 4) = 0xd2b5` ✓ matches `g_avrcp_req_event_database` vaddr. extended_T2's `bl.w restore_conn_tid` at file offset `0xaf6a` decodes to target `0xbae2` ✓.
+
+### State bytes [13..20] now pure subscription gates
+
+With the database providing per-event TIDs, the `state[N]` bytes that previously encoded `TID + 1` (state[16] for ev=02, state[20] for ev=09) revert to pure 0/1 subscription flags, matching the schema documented for state[13..19] (sub_pos / sub_play / sub_papp / sub_track_changed / sub_track_reached_end / sub_track_reached_start / sub_battery). Bytes that were 1..16 from a previous flash session under the TID+1 encoding are interpreted as "subscribed" — harmless on the first re-subscription, which writes a fresh 1.
+
+### Patcher state (post-fix)
+
+- `_trampolines.py`: shared `restore_conn_tid` subroutine + per-call-site `bl restore_conn_tid` stubs at every `*_rsp` blx site. `_emit_restore_conn_tid_from_db(a, conn_reg, event_id, tag)` is the helper API.
+- `_thumb2asm.py`: new `Asm.ldr_lit_w(rt, label)` for PC-relative literal loads (Thumb-2 T2 encoding `0xF85F` family).
+- `patch_libextavrcp_jni.py`: OUTPUT_MD5 / OUTPUT_DEBUG_MD5 pins updated.
+- `patch_mtkbt.py`: unchanged from 3b0c628 (M5 cave with `cmp r0, 0` discriminator on `packet[+0xd]`).
+
+### Expected post-fix behavior
+
+The trampoline now emits, at every rsp call site:
+1. `r0 = conn_ptr (= avrcp_state + 8)`
+2. `movs r1, #event_id`
+3. `bl restore_conn_tid` → reads `database[event_id]`, writes `conn[+0x11]`
+4. Set up `r1, r2, r3` for the rsp builder
+5. `blx *_rsp`
+
+`*_rsp` packs `conn[+0x11]` into `msg[5]`. mtkbt's `fcn.0xf0bc:0xf1a8` writes `chan+0x39 = packet[+0xa] = msg[5]`. M5 cave at `0x6d186` skips its strb on outbound (`packet[+0xd] = 0`), preserving the `chan+0x39` write. Wire builder reads `chan+0x39` for the TID nibble.
+
+For Bolt 1222's failing case: ev=09 RegNotif arrives with TID=N → `saveRegEventSeqId(9, N)` → `database[9] = N`. T8 INTERIM ack runs → `restore_conn_tid(conn, 9)` writes `conn[+0x11] = N`. Outbound INTERIM ships with TID=N. CT acknowledges. Track edge fires `T5ncc` (gated on state[20]) → `restore_conn_tid(conn, 9)` reads `database[9] = N` again, writes `conn[+0x11] = N`. Outbound CHANGED ships with TID=N. Bolt accepts. Pane updates without lag.
+
+If Bolt logs still show `c39=0` for `T5ncc`-adjacent frames after this fix, either (a) `database[9]` is not being populated (unlikely — stock JNI is invariably calling `saveRegEventSeqId` from the dispatcher), or (b) Bolt is not actually re-subscribing to ev=09 in this session (would show as no `T8reg ev=09` — but T8reg log was dropped, so verify via M5wire frame counts before/after track edge), or (c) the cave isn't preserving the c39 write (D2 `M5dbg p8/pd/ba9=` logs would surface it).
+
+## Trace #72 (2026-05-19) — Bolt 1951: zero subscribes; T2reg debug marker added
+
+### What happened
+
+Bolt 1951 capture showed `0 T5tc / 0 T9ps / 0 T9papp` despite `537 Y1T tags` total (all M5dbg / M5wire — mtkbt-side wire-frame logs). 18 inbound frames over the entire session (p8=ea); only 4 of them were AV/C CMDs — two PASSTHROUGH `0x4B NEXT` PRESS+RELEASE pairs and two `0x46 PAUSE` PRESS+RELEASE pairs. **Bolt sent zero `RegisterNotification` PDUs in this session.** All 5 prior Bolt captures (1448, 1540, 1647, 1830, 1904) had between 11 and 339 outbound wire frames; this one had 6.
+
+User context: Bolt had bluetooth-crashed on Y1 in the prior session (1904, triggered by the r2-clobber bug in `incr_and_get_track_identifier` — fixed in commit df1894a). The 1951 session was post-fix. Possibility: Bolt's CT-side AVRCP impl cached "Y1's AVRCP is broken, don't subscribe" after the crash. User did forget+repair Bolt before subsequent sessions.
+
+### Visibility gap exposed
+
+The Y1T tag set in `patch_libextavrcp_jni.py` covered only outbound CHANGED-emit confirmation (`T5tc`/`T9ps`/`T9papp`). Absence of `T5tc` could mean any of:
+1. CT didn't send `RegisterNotification(ev=02)` this session
+2. CT sent it but extended_T2 didn't get entered (R1 redirect or PDU dispatch broken)
+3. extended_T2 entered but `save_event_seq_id` didn't write the database
+4. Database was re-cleared mid-session by a subsequent `GetCapabilities`
+
+No way to distinguish these from log content alone.
+
+### Fix (commit 52a8a80, 2026-05-19)
+
+Added `T2reg ev=%02x` native log at `_emit_extended_t2`'s PDU=0x31 arm (right after the PDU check, before `save_event_seq_id`). Drops the `M5dbg ba9` log from `patch_mtkbt.py`'s D2 cave to stay within the 4020-byte LOAD #1 budget (ba9 was a historical reference for the M7-era TID-sync hypothesis; not load-bearing post-M7-removal — the M5 discriminator already uses `packet[+0xd]`).
+
+Diagnosis matrix going forward:
+
+| `T2reg ev=N` present | Outbound marker present | Diagnosis |
+|---|---|---|
+| no  | no  | CT didn't subscribe to ev=N this session |
+| yes | no  | CT subscribed; our CHANGED gate or emit path broke |
+| no  | yes | shouldn't happen — investigate ghost-arm |
+| yes | yes | healthy path |
+
+Release MD5 unchanged (no code path differences). Debug MD5: `9c559e7039... → a7fe9353b9...` (jni) / `0246e82640... → ab5cf72d48...` (mtkbt).
+
+### Cross-CT comparison
+
+| CT | M5dbg frames | Inbound CMDs (p8=ea) | T5tc | T9ps | T9papp |
+|---|---|---|---|---|---|
+| Bolt 1951 | 18 | 4 | **0** | **0** | **0** |
+| TV 1956 | 741 | 16 | 3 | 6 | 0 |
+| Sonos 1954 | 177 | 16 | 6 | 2 | 0 |
+
+TV + Sonos both subscribed and got CHANGEDs cleanly with the same patcher build. The Y1 pipeline itself is healthy; the Bolt 1951 case is Bolt-side state.
+
+---
+
+## Trace #73 (2026-05-19) — Bolt 2112: subscribes aggressively (post-repair); "hit or miss" diagnosed as multi-wake burst saturation + GEA refetch gaps
+
+### Session shape
+
+Bolt 2112 capture (after user forgot+repaired Bolt): completely different profile.
+
+| Metric | Bolt 1951 | Bolt 2112 |
+|---|---|---|
+| Outbound wire frames (M5wire) | 6 | 397 |
+| Inbound CMDs (p8=ea) | 4 | 19 |
+| T2reg total | 0 | **93** |
+| T5tc | 0 | 5 |
+| T9ps | 0 | 22 |
+| T9papp | 0 | 0 |
+
+Bolt subscribed to **all 8 advertised events**: ev=01 (×12 RegNotifs over session), ev=02 (×1, session-long subscription — no re-register), ev=05 (×75, strict §6.7.1 re-register after every CHANGED), ev=08 (×1), ev=09/0a/0b/0c (×1 each in initial burst).
+
+User report: "Bolt was hit or miss. Still weirdness."
+
+### Wire-level evidence of the "miss"
+
+GetElementAttributes refetch pattern overlaid with T5tc emits:
+
+| Track edge | T5tc emit | Bolt's GEA refetch | Delay |
+|---|---|---|---|
+| Track 1 | 21:09:25.691 | 21:09:29.826 (strlen=11) | 4.1 s |
+| Track 2 | 21:09:38.049 | 21:09:45.763 (strlen=9) | 7.7 s |
+| Track 3 | 21:09:52.849 | **none** | — |
+| Track 4 | 21:10:06.996 | **none** | — |
+| Track 5 | 21:11:00.821 | 21:11:00.179 (strlen=14) | ~0 |
+
+Tracks 3 and 4 got `TRACK_CHANGED CHANGED` on the wire (T5tc fired) but **Bolt never refetched metadata for them**. The metadata pane stays on Track 2's data through Tracks 3 and 4. That's the "freeze."
+
+### Smoking gun #1: multi-wake bursts on track edges
+
+Around each track edge, the music app's `PlaybackStateBridge` cascade fires `wakePlayStateChanged` 3+ times in <200 ms:
+
+```
+21:09:38.049  T5tc       (TRACK_CHANGED CHANGED — track edge)
+21:09:38.060  T2reg ev=05   (Bolt re-subscribes to POSITION)
+21:09:38.064  wakePlayStateChanged   (Java-side wake #1)
+21:09:38.087  T2reg ev=05   (Bolt re-subscribes AGAIN)
+21:09:38.149  wakePlayStateChanged   (wake #2)
+21:09:38.168  T2reg ev=05
+21:09:38.243  wakePlayStateChanged   (wake #3)
+21:09:38.260  T2reg ev=05
+```
+
+Three `wakePlayStateChanged` calls in 200 ms → T9 fires 3 PLAYBACK_POS_CHANGED back-to-back. Bolt processes each, re-subscribes, gets the next CHANGED, and so on — but the rapid cluster saturates its AVCTP buffer. **Inter-arrival distribution of Bolt's 75 ev=05 RegNotifs: 21 of 75 (28%) arrived within <500 ms of the previous one.** Clean 1 Hz cadence on the remaining ~32 RegNotifs.
+
+The cascade source: `onCompletion → onPrepared → onPlayerPreparedTail → setPlayValue` each fires its own `wakePlayStateChanged` independently. Stock AOSP `MediaSession` coalesces internally; our injected `PlaybackStateBridge` doesn't.
+
+184 `playstatechanged` broadcasts over a 64 s session ≈ **2.9 Hz** vs. AVRCP 1.3 §5.4.2 Tbl 5.33 nominal 1 Hz.
+
+### Smoking gun #2: empty initial GetElementAttributes
+
+The very first GEA (21:09:24.369) returned **all 7 attributes with `strlen:0`** — empty Title/Artist/Album/Genre/TrackNumber/TotalTracks/PlayingTime. Bolt connected and probed before the music app's `TrackInfoWriter` had populated `y1-track-info` (no track loaded yet — user hadn't pressed PLAY). Bolt retried 30 ms later (21:09:24.399, still empty) then gave up for ~5 s. Eventually the real metadata landed at 21:09:25.849 and Bolt's next GEA at 21:09:29.826 carried real data.
+
+Not user-visible in this capture (Bolt did eventually refetch), but it's a startup race worth tracking — a CT that keys metadata-pane render on the *first* GEA only would render empty until next track-change.
+
+### Fix #1 — wakePlayStateChanged rate-limit (commit 105eef5, 2026-05-19)
+
+Added an 800 ms gate inside `TrackInfoWriter.wakePlayStateChanged` (`src/patches/inject/com/koensayr/y1/trackinfo/TrackInfoWriter.smali`):
+
+```
+:try_start_0
+# Suppress broadcast when mPlayStatus unchanged AND <800ms since last call.
+# Real play-state edges (mPlayStatus differs from mLastWakePlayStatus)
+# bypass unconditionally.
+invoke-static {}, Landroid/os/SystemClock;->elapsedRealtime()J
+move-result-wide v5
+iget-wide v2, p0, mLastWakePlayStateAt:J
+sub-long v0, v5, v2
+const-wide/16 v2, 0x320  # 800 ms
+cmp-long v4, v0, v2
+if-gez v4, :rate_limit_proceed
+iget-byte v0, p0, mPlayStatus:B
+iget-byte v1, p0, mLastWakePlayStatus:B
+if-ne v0, v1, :rate_limit_proceed
+return-void
+
+:rate_limit_proceed
+iput-wide v5, p0, mLastWakePlayStateAt:J
+iget-byte v0, p0, mPlayStatus:B
+iput-byte v0, p0, mLastWakePlayStatus:B
+# ... existing broadcast code
+```
+
+Two new fields: `mLastWakePlayStateAt:J`, `mLastWakePlayStatus:B`. Gate applies ONLY when `mPlayStatus` is unchanged — real play-state edges (PAUSE → PLAY, PLAY → PAUSE) always bypass, so user-driven hammering at 21:10:31-42 (5 toggles in 12 s, all >1 s gaps) is unaffected.
+
+`y1-track-info` file gets flushed at the call site BEFORE `wakePlayStateChanged` runs (`setPlayStatus / flush / onTrackEdge / markCompletion` paths). T6 GetPlayStatus polling stays current regardless of broadcast suppression. Position CHANGED cadence drops from ~2.9 Hz to nominal 1 Hz.
+
+Interaction with `markTrackChange(1s)` PAUSED-blip suppression in `PlaybackStateBridge.onPlayValue`: the two gates compose cleanly. `markTrackChange` skips both `setPlayStatus(2)` AND `wakePlayStateChanged()` for `newValue=3 (PAUSED)` inside its 1 s window. The new 800 ms cap is a layer below — both bias toward fewer spurious emits.
+
+Build error follow-up (commit 2484896): the `--debug` value-patch anchor for `wakePlayStateChanged` in `patch_y1_apk.py` was matching `.locals 5` + the original first statement. The rate-limit bumped `.locals` to 7 and pushed the gate ahead of the `mContext` load. Re-anchored on `.locals 7` + the rate-limit gate's opening comment line; debug log (`_dbgLogTrampolineState "wPSC.pre"`) now injects right after `:try_start_0` and BEFORE the gate, so the diagnostic fires on every call including the suppressed ones. Verified by building 3.0.2 and 3.0.7 APKs with `KOENSAYR_DEBUG=1`.
+
+---
+
+## Trace #74 (2026-05-20) — Pixel↔Bolt full btsnoop parse: behavior deltas + fix candidate ranking
+
+### Source
+
+`/work/logs/pixel4-bugreport-20260518-1959/FS/data/misc/bluetooth/logs/btsnoop_hci.log` — Pixel 4 bonded with `cc:88:26:6f:e0:af` ("myChevrolet" per Pixel's MR2ServiceImpl log). Live BT capture window covers an active Pixel↔Bolt AVRCP session over ACL handle `0x0003`. **375 AVRCP frames** + 107 plain L2CAP + 52 SDP + 50 RFCOMM/HFP + 28 AVDTP. The `.last` file (older rotation) doesn't contain Bolt — only Sonos — and was the wrong file in earlier analysis.
+
+### SDP record diff (Pixel TG vs Y1 TG post-V1..V8/S1)
+
+| Attribute | Pixel | Y1 (pre P_PN0/P_PN1) | Y1 (post) |
+|---|---|---|---|
+| 0x0001 ServiceClassIDList | UUID 0x110c | UUID 0x110c | UUID 0x110c |
+| 0x0004 ProtocolDescList | L2CAP(0x0017) + AVCTP(0x0102) | same | same |
+| 0x0005 BrowseGroupList | {PublicBrowseRoot 0x1002} | {PublicBrowseRoot 0x1002} | **ABSENT** (P_PN1 reuses slot) |
+| 0x0009 BluetoothProfileDescList | AVRCP(0x0103) | AVRCP(0x0103) | AVRCP(0x0103) |
+| 0x0100 ServiceName | "AV Remote Control Target " | "Advanced Audio" (V7) | "Advanced Audio" (V7) |
+| 0x0102 ProviderName | " " (single space) | **ABSENT** | **" "** (P_PN0+P_PN1, 2026-05-20) |
+| 0x0311 SupportedFeatures | 0x0001 | 0x0001 (V8) | 0x0001 (V8) |
+
+ServiceName text difference is cosmetic. Post P_PN0+P_PN1 (commit f19ad7c), the only remaining delta is `0x0005 BrowseGroupList` (we drop, Pixel keeps). Bolt discovers services via UUID search against `0x0001 ServiceClassIDList` which the TG record still ships — empirically Bolt connects fine without `0x0005`.
+
+### GetCapabilities (Events Supported)
+
+Both advertise the **identical 8-event set**: `{0x01, 0x02, 0x05, 0x08, 0x09, 0x0a, 0x0b, 0x0c}`. Verified via tshark PDML dump of Pixel's `Sent Stable - GetCapabilities` frame.
+
+### Bolt's RegisterNotification parameters
+
+`PlaybackPositionChanged (0x05)` RegNotif from Bolt carries `Interval: 1` (1 second). Per AVRCP 1.3 §5.4.2 Tbl 5.33, this is the playback_interval the CT requests CHANGED notifications at. Pixel honors it — emits CHANGED at clean 1 Hz. Y1's T9 ignores the inbound parameter and emits on every wake (now rate-limited to ≥800 ms).
+
+### Track-edge choreography — Pixel vs Y1
+
+Pixel's complete sequence on a single track change (e.g., the cycle at 78.013-78.749):
+
+```
+T+0      Sent CHANGED NowPlayingContentChanged
+T+0      Sent CHANGED TrackChanged - Identifier=0x00 (SELECTED)   ← PHASE 1
+T+40     Rcvd GetElementAttributes
+T+41     Sent GEA Stable Title="Not Provided"  (metadata not ready yet)
+T+65     Rcvd Notify NowPlayingContentChanged  (Bolt re-registers)
+T+67     Sent INTERIM NCC
+T+90     Rcvd GEA
+T+91     Sent GEA "Not Provided"
+T+118    Rcvd Notify TrackChanged
+T+120    Sent INTERIM TC Identifier=0x00
+T+478    Sent CHANGED NowPlayingContentChanged  (proactive — second NCC!)
+T+478    Sent CHANGED PlaybackStatusChanged - PlayStatus=Paused  (PAUSED blip!)
+T+484    Sent CHANGED TrackChanged - Identifier=0x01   ← PHASE 2 (bumped)
+T+506    Rcvd GEA
+T+508    Sent GEA "ANTHEM PART 3"  (real metadata)
+T+530    Rcvd Notify NCC
+T+535    Sent INTERIM NCC
+T+554    Rcvd Notify PSC
+T+556    Sent INTERIM PSC PlayStatus=Playing  (transitions back to Playing)
+T+570    Rcvd GEA
+T+572    Sent GEA "ANTHEM PART 3"
+T+619    Rcvd Notify TC
+T+623    Sent INTERIM TC Identifier=0x01
+T+665    Rcvd GEA
+T+667    Sent GEA "ANTHEM PART 3"
+T+736    Sent CHANGED PlaybackPositionChanged SongPosition=37ms
+T+753    Rcvd Notify PPC
+T+755    Sent INTERIM PPC SongPosition=56ms
+T+1757   Sent CHANGED PPC SongPosition=1025ms  (clean 1 Hz cadence)
+```
+
+Y1's current sequence on a track edge (T5 trampoline, single emission):
+
+```
+T+0      Sent CHANGED NowPlayingContentChanged
+T+0      Sent CHANGED PlaybackPositionChanged
+T+0      Sent CHANGED TrackChanged - Identifier=monotonic-counter (bumped once)
+T+0      Sent CHANGED [REACHED_END / REACHED_START — usually gated out]
+```
+
+### Behavioral deltas (Pixel does, Y1 doesn't)
+
+1. **TWO-PHASE TrackChanged**: Phase 1 with previous Identifier (or `0x00` SELECTED) at early track-switch trigger; Phase 2 with new Identifier after metadata flushes. **480 ms apart in Pixel.** Bolt likely uses Phase 2 as the refetch trigger.
+
+2. **NowPlayingContentChanged TWICE per track edge**: once on early switch, once after metadata settle. Y1 emits NCC once.
+
+3. **PAUSED CHANGED emitted during track change**: Pixel ships `PlaybackStatusChanged PlayStatus=Paused` mid-transition (T+478) without suppression. Y1 actively suppresses this via `PlaybackStateBridge.onPlayValue`'s `markTrackChange(1s)` deadline gate.
+
+4. **PlaybackPositionChanged emitted FIRST on track edge** (T+0 in the next cycle at 100.599, vs TC at 100.604 — PPC leads by ~5 ms). Y1 emits TC first then PPC.
+
+5. **GetElementAttributes response shape**: Pixel emits NumberOfAttributes equal to the number it *has data for* (e.g. 4 of 7 requested) with literal `"Not Provided"` for unknown Title, `"1"`/`"0"` ASCII for unknown numeric. Y1 always emits NumberOfAttributes = requested with `strlen=0` for unknown (per §5.3.4 strict reading).
+
+6. **GEA response latency**: Pixel 1-3 ms, Y1 ~21-30 ms. Y1's overhead comes from T4's `open()`+`read()` of `y1-track-info` from `/data` per GEA + 7 separate `send_get_element_attributes_rsp` builder calls. Bolt fires GEAs in tight bursts of 3 within ~80 ms — Y1 might not finish the first response before the third request lands.
+
+7. **TrackChanged INTERIM ships stale "previous" Identifier**: Pixel's INTERIM responses ship `0x...01` consistently even after CHANGED with `0x...02`. Pixel's INTERIM doesn't reflect current state — quirky but Bolt accepts.
+
+8. **Pixel REJECTS SetPlayerApplicationSettingValue with `Invalid Parameter`**: 5 inbound from Bolt got rejected by Pixel. Y1 ACCEPTS PApp Sets (T_papp 0x14 → PappSetFileObserver → SharedPreferencesUtils). Y1 *exceeds* Pixel here; not a bug.
+
+9. **Empty initial GEA is normal**: Pixel's first 5 GEAs to Bolt also returned "Not Provided" (no metadata yet). Bolt handles empty-start gracefully. Rules out the "empty first GEA causes freeze" hypothesis.
+
+10. **Pixel's Identifier semantic is the actual NowPlayingList row UID** (Pixel cycles 0x00 / 0x01 / 0x02 across the 3-track playlist Bolt was traversing). Y1's monotonic counter is a different semantic but functionally equivalent for Bolt (which uses "Identifier differs from last" as the refetch trigger).
+
+### Fix candidate ranking (after rate-limit + ProviderName)
+
+| # | Fix | Effort | Expected impact | Status |
+|---|---|---|---|---|
+| 1 | T4 in-memory cache — read `y1-track-info` on metachanged broadcast into JNI `.bss`, T4 serves from memory | Medium | High — closes the 10-30× latency gap, likely fixes Bolt GEA burst response | Deferred |
+| 2 | Two-phase TRACK_CHANGED emit — Phase 1 Identifier=0 SELECTED on track-switch start, Phase 2 with monotonic counter after metadata flush | Low-Med | High — matches Pixel's exact wire signal Bolt is built against | Bundled with #3,#4 |
+| 3 | Double NCC emit per track edge — emit at early switch + at metadata-settled point | Low | Medium | Bundled with #2,#4 |
+| 4 | Reorder: PPC=0 → TC on track edge instead of TC → PPC | Low | Low-Medium (UX cleanup) | Bundled with #2,#3 |
+| 5 | Honor inbound `playback_interval` — plumb the byte from RegNotif into the database, T9 emits only when interval elapsed | Medium | Low (rate-limit already covers position cadence) | Skip for now |
+| 6 | Revisit markTrackChange suppression — Pixel doesn't suppress, ship the PAUSED CHANGED through | Low | Unknown (other CTs may have relied on suppression — needs A/B test) | Defer |
+
+### Implementation plan for the #2+#3+#4 bundle
+
+Bundle them as a single coherent change ("match Pixel's track-edge choreography on the wire"). One cohesive edit in `_trampolines.py`:
+
+a. **Add two T5 entry points**:
+   - `t5_phase1_no_bump`: emits NCC + PPC=0 + TC (no Identifier bump) — called from `PlaybackStateBridge.onEarlyTrackChange` via a new `wakeTrackChangedPhase1` method on `TrackInfoWriter`.
+   - `t5_phase2_bump` (= existing `T5`): emits NCC + PPC + REACHED_END + TC (bumps Identifier) + REACHED_START — called from existing `wakeTrackChanged` paths after `onPlayerPreparedTail`'s flush.
+
+b. **Reorder T5 emit sequence**: move PPC ahead of TC in both phases. Currently NCC → PPC → REACHED_END → TC → REACHED_START. New order: NCC → PPC → REACHED_END → TC → REACHED_START stays for Phase 2, but Phase 1 keeps it simpler: NCC → PPC=0 → TC (no REACHED_END / REACHED_START in Phase 1).
+
+c. **Phase 1 trigger**: music-app-side hook in `PlaybackStateBridge.onEarlyTrackChange` adds a `wakeTrackChangedPhase1` call. The existing `onEarlyTrackChange` already fires on `toRestart()`'s `setDataSource(newPath)` site — 100-500 ms earlier than `onPrepared`. Phase 2 fires from `onPlayerPreparedTail` (after `playerIsPrepared = true` flips and duration is captured).
+
+d. **Identifier semantics for Phase 1**: ship the *current* Identifier (no bump). Phase 2 bumps. So Bolt sees TC CHANGED with Identifier=N (Phase 1) then TC CHANGED with Identifier=N+1 (Phase 2). Phase 1 signals "transition starting"; Phase 2 signals "settled, refetch metadata."
+
+### Why skip #5 and defer #6
+
+**#5 (playback_interval)**: adds new state plumbing (extended_T2 extracts the interval byte from inbound RegNotif payload, save to new `.bss` slot, T9 gates position emit on elapsed-since-last vs interval). It's a clean spec-compliance improvement but the 800 ms rate-limit already delivers the same effective wire cadence for Bolt's `Interval: 1` request. Adding #5 now costs more code than it returns. Save it for when we see a CT requesting a different interval (5 s, 30 s, etc).
+
+**#6 (remove markTrackChange suppression)**: the suppression was added 2026-05-15 for a specific CT-side observation — "spurious paused-state blips interrupt head-unit playback indicators during track changes." It's in the released CHANGELOG. Removing it because Pixel doesn't suppress is a reference-mimicry reflex — Pixel's CT-compat profile differs (Pixel ships AOSP MediaSession with built-in coalescing; our PlaybackStateBridge cascades independent wakes through onCompletion/onPrepared/onPlayerPreparedTail/setPlayValue). Pixel's PAUSED blip works because the rest of Pixel's frame sequencing is clean. Our blip used to land during burst storms that already had Bolt under AVCTP pressure. The rate-limit fix likely makes #6 safe again, but validating that needs an A/B test, not a speculative removal. Wait until next Bolt capture confirms the rate-limit fixed Tracks 3/4 freeze first.
+
+### Risk side of bundling
+
+If the next Bolt capture still freezes, bisection space is: {rate-limit (105eef5), ProviderName (f19ad7c), two-phase track-edge (this bundle)}. Three changes is manageable. Adding #5/#6 would push to five — bisection gets painful fast.
+
+### Decision
+
+Bundle #2+#3+#4 in a single subsequent commit (post user-test of the rate-limit + ProviderName changes). Defer #5 indefinitely (low value-per-LOC vs other fixes). Defer #6 until rate-limit fix is validated.
+
+## Trace #75 (2026-05-19) — Bolt 2221: PSC edges are Bolt's metadata-refresh trigger, not TC; PSC pulse at track-edge implemented
+
+### What the user found
+
+User experimented with rapid PLAY/PAUSE hammering on Bolt's steering-wheel buttons during a Bolt 2221 session and observed: **metadata updated MUCH faster** than the ~40 s natural cycle. Their initial hypothesis: "Y1 is locking up between track changes; PLAY/PAUSE toggling unlocks it."
+
+### What the wire trace proves
+
+Bolt 2221 capture profile vs Bolt 2112 (same patcher build):
+
+| metric | Bolt 2112 (no hammering) | Bolt 2221 (heavy PLAY/PAUSE) |
+|---|---|---|
+| T2reg total | 93 | 51 |
+| T2reg ev=01 PlaybackStatus | 12 | **42** |
+| T2reg ev=05 PlaybackPosition | 75 | 3 |
+| T5tc TrackChanged emits | 5 | 10 |
+| T9ps PlaybackStatus emits | 22 | 63 |
+| PASSTHROUGH key events | 18 | ~120 |
+
+Bolt re-registered PlaybackStatusChanged **42 times** in 2221 (one per real state edge from user button presses) and only **3 times** for PlaybackPosition (because user was mostly paused, no position emits → no re-register).
+
+Overlay GetElementAttributes refetches against PSC edges:
+
+```
+22:19:18 T5tc track-edge      → 22:19:18 GEA refetch (4.1 s after T5tc — refetched)
+22:19:33 T5tc track-edge      → no GEA refetch       (NEXT button, but no PSC edge accompanied it)
+22:19:46 T5tc track-edge      → no GEA refetch       (another track edge, no PSC, no refetch)
+22:19:22 → 22:20:24 = 62-second GEA gap              ← THE "FREEZE"
+22:20:34 NEXT press
+22:20:36 PAUSE press → T9ps   → 22:20:38 GEA refetch (~2 s after PSC edge)
+22:20:38 PLAY press  → T9ps   → 22:20:42 GEA refetch
+22:20:40 PAUSE       → T9ps   → 22:20:46 GEA refetch
+...every PLAY/PAUSE = T9ps emit + GEA refetch within 2-4 s
+```
+
+**Bolt's CT-side metadata-refresh trigger is `PlaybackStatusChanged`, not `TrackChanged`.** TC CHANGED reaches Bolt (T5tc fires on the wire, database[2] gate is armed), but Bolt's parser doesn't refetch on TC alone — it refetches on PSC edges and on PASSTHROUGH key events. The "freeze" symptom is Bolt's refresh logic being dormant without PSC edges.
+
+### Why natural track ends produce zero PSC edges
+
+In the music app's natural track-end → next-track path:
+
+1. `onCompletion` (player engine EOS) — no `setPlayValue` call, file[792] stays at 1 (PLAYING)
+2. `onPrepared` (next track) — `setPlayValue` may fire but PlayerService keeps PLAYING throughout
+3. `setPlayValue(1)` PLAYING — `setPlayStatus(1)` writes file[792]=1 (no change), `wakePlayStateChanged()` fires, T9 reads file[792]=1 vs state[9]=1 → **no edge → no emit**
+
+In the music app's `restartPlay()` (manual NEXT/PREV) path:
+
+1. `pause()` → `setPlayValue(3)` PAUSED → `onPlayValue` v0=2 → **`markTrackChange(1s)` suppresses both setPlayStatus AND wake** → file[792] stays 1, no PSC edge
+2. `setDataSource(newPath)` → `onEarlyTrackChange`
+3. `prepareAsync` → `onPrepared` → `onTrackEdge` + `wakeTrackChanged`
+4. `setPlayValue(1)` PLAYING → `setPlayStatus(1)` → file[792]=1 still, state[9]=1 still → no edge → no emit
+
+Both paths produce zero PSC CHANGED — `markTrackChange` compounds the natural-EOS gap.
+
+### Pixel-as-TG comparison
+
+Pixel's btsnoop (handle 0x0003, Bolt session) ships PSC=Paused CHANGED mid-transition at T+~480 ms after track-switch trigger, then PSC=Playing INTERIM via Bolt's re-register burst. Two PSC edges per track edge — bracketing the TC CHANGED. Bolt refetches twice. Same wire shape we need.
+
+### Fix (commit pending)
+
+Added `TrackInfoWriter.pulsePlayStatusForCT()`:
+
+```
+public synchronized void pulsePlayStatusForCT() {
+    if (mPlayStatus != PLAYING) return;
+    setPlayStatus(PAUSED);             // file[792]=2 + flushLocked
+    wakePlayStateChanged();            // T9 sees edge (state[9]=1 vs file[792]=2) → emits PSC=PAUSED CHANGED
+    setPlayStatus(PLAYING);            // file[792]=1 + flushLocked
+    wakePlayStateChanged();            // T9 sees edge (state[9]=2 vs file[792]=1) → emits PSC=PLAYING CHANGED
+                                       // T9 position branch (gated on file[792]==1) also emits POSITION CHANGED
+}
+```
+
+Called from `PlaybackStateBridge.onPlayerPreparedTail` after the existing `wakeTrackChanged` + `wakePlayStateChanged` calls. `onPlayerPreparedTail` is the canonical end-of-track-edge hook (B5.2c), fires after `iput-boolean playerIsPrepared = true` flips — duration is captured, audio_id is settled, file is consistent.
+
+Wire shape post-fix at every track edge:
+
+```
+T+0       T5tc (TRACK_CHANGED CHANGED, Identifier counter bumped)
+T+0       NowPlayingContentChanged CHANGED
+T+0       PlaybackPositionChanged CHANGED (position=0 for new track)
+T+~5ms    PSC=PAUSED CHANGED        ← pulse phase 1
+T+~10ms   PSC=PLAYING CHANGED       ← pulse phase 2
+T+~10ms   PlaybackPositionChanged CHANGED (position progressing)
+```
+
+Bolt sees two PSC edges per track edge → refreshes metadata pane immediately, no longer waits for polling cycle.
+
+### Why this is safe
+
+- **Rate-limit gate (commit 105eef5)**: bypasses on every real play-status flip. Both pulse wakes flip `mPlayStatus` (1→2, 2→1), so both bypass.
+- **`markTrackChange(1s)` suppression**: lives in `PlaybackStateBridge.onPlayValue`, not in `pulsePlayStatusForCT`. The two are independent gates.
+- **Position drift**: each `setPlayStatus` call advances `mStateChangeTime`. Two calls separated by <5 ms drift `mPositionAtStateChange` by <5 ms — invisible on the CT's playhead.
+- **Audio_id edge detection in `setPlayStatus`**: at `onPlayerPreparedTail` time, `mCachedAudioId` already reflects the new track. Snapshot and post-flushLocked re-read both see the same value → no false audio_id reset.
+- **Other CTs**: TV (gold standard), Sonos, Kia — adding PSC blips at track edges should at worst be wire noise they ignore (TV is "instant" regardless, Sonos doesn't render play-state much, Kia polls). Pixel ships the same wire shape and works on all four — empirical reassurance.
+- **Only fires when PLAYING**: the early return guard means track edges that land while paused/stopped don't get a phantom pulse.
+
+### Decision log
+
+- The simpler fix candidate ("remove `markTrackChange` suppression entirely") was considered and rejected. `markTrackChange` only affects `restartPlay()`'s internal pause→play handshake — natural track ends (the more common case) never go through that path. So removing `markTrackChange` would only help the manual-NEXT case, not the more important auto-advance case. The explicit pulse handles both.
+- Could also have implemented as a trampoline-side change in T5 (emit PSC CHANGED unconditionally after TC), but T5's edge detection is intrinsic to its design — bypassing it cleanly requires bypassing the file→state comparison entirely, which is more invasive than the music-app-side pulse.
+
+## Trace #76 (2026-05-20) — Bolt 0625: PSC pulse race condition; 50 ms Handler.postDelayed inserted between phases
+
+### What Bolt 0625 captured
+
+First flash with the in-Java PSC pulse from Trace #75 (TrackInfoWriter.pulsePlayStatusForCT calls setPlayStatus(2) + wakePlayStateChanged + setPlayStatus(1) + wakePlayStateChanged inline). Tag distribution:
+
+| metric | Bolt 2221 (pre-pulse) | Bolt 0625 (with inline pulse) |
+|---|---|---|
+| M5dbg / M5wire | 1176 / 588 | 1068 / 534 |
+| T5tc | 10 | 21 |
+| T9ps | 63 | 69 |
+| T2reg ev=01 | 42 | 10 |
+| Track edges | ~10 | 21 |
+
+T5tc went up 2× because user did a session of 21 rapid track skips (06:23:00 - 06:24:34). T9ps only went up modestly (69 vs 63) — meaning the pulse fired its two PSC CHANGEDs successfully on SOME track edges but not all.
+
+### Working pulse (06:23:50 edge)
+
+```
+06:23:50.378  setPlayStatus from=1 to=2        ← pulse phase 1 SET
+06:23:50.379  flushLocked ps=2                  ← file[792]=2 durable
+06:23:50.380  wakePlayStateChanged              ← phase 1 wake
+06:23:50.384  setPlayStatus from=2 to=1        ← pulse phase 2 SET
+06:23:50.385  flushLocked entry (ps=1 in progress)
+06:23:50.385  T9ps (PSC=PAUSED CHANGED)         ← T9 fired for phase 1 broadcast, read file[792]=2 (still!)
+06:23:50.387  ps=1 written                     ← file[792]=1 now durable
+06:23:50.389  wakePlayStateChanged              ← phase 2 wake
+06:23:50.400  T9ps (PSC=PLAYING CHANGED)        ← T9 fired for phase 2, read file[792]=1, state[9]=2 → edge
+```
+
+T9 fired during the tiny window after `setPlayStatus(1)` entry but BEFORE `flushLocked` wrote `ps=1`. The race resolved in our favor by luck — mtkbt happened to schedule T9 ~5 ms after phase 1's broadcast, before phase 2's file write.
+
+### Failing pulse (06:23:54 edge)
+
+```
+06:23:54.908  setPlayStatus from=1 to=2        ← pulse phase 1 SET
+06:23:54.910  flushLocked ps=2                  ← file[792]=2 durable
+06:23:54.911  wakePlayStateChanged              ← phase 1 wake
+06:23:54.916  setPlayStatus from=2 to=1        ← pulse phase 2 SET
+06:23:54.917  flushLocked ps=1 written         ← file[792]=1 durable (only 7 ms after phase 1's write)
+06:23:54.917  mtkbt onReceive playstatechanged ← processes phase 1's broadcast
+06:23:54.918  wakePlayStateChanged              ← phase 2 wake
+                                                 (T9 fires for phase 1's broadcast NOW — but
+                                                  file[792]=1 already, state[9]=1, no edge,
+                                                  no emit)
+06:23:54.930  mtkbt onReceive playstatechanged ← processes phase 2's broadcast
+                                                 (T9 fires — file[792]=1, state[9]=1, no edge,
+                                                  no emit)
+NO T9ps emitted on this edge.
+```
+
+mtkbt's broadcast-to-native scheduling jitter on rapid-skip cycles was enough to push T9's phase-1 invocation past phase 2's file write. Both T9 invocations read `file[792]=1` and saw no edge.
+
+### Root cause
+
+`T9` reads `y1-track-info` from disk at *run time*, not at *broadcast-queued time*. The musicapp-side pulse pattern (set + wake + set + wake) assumes T9 will fire for each broadcast in order, reading the file state at each broadcast's queued time. In reality T9's invocation latency varies with mtkbt load — on a busy main thread (rapid track skips), the gap between broadcast queueing and T9 dispatch can exceed the pulse's inter-phase write gap, causing T9 to read the same final file state for both broadcasts.
+
+This is a fundamental race in any "set file + wake" design where the consumer reads at run time. AOSP's MediaSession framework sidesteps it by passing the new state IN the broadcast extras — but our trampolines read the file directly, not Java extras.
+
+### Fix
+
+Add an explicit 50 ms gap between phases via `Handler.postDelayed` on the main Looper. New class `com.koensayr.y1.playback.PscPulse`:
+
+- `static fire()`: phase 1 — `setPlayStatus(PAUSED)` + `wakePlayStateChanged()`. Then `Handler.postDelayed(this, 50)`.
+- `Runnable.run()`: phase 2 — `setPlayStatus(PLAYING)` + `wakePlayStateChanged()`.
+
+`TrackInfoWriter.pulsePlayStatusForCT` now just owns the "only pulse while PLAYING" gate and delegates to `PscPulse.fire()`. The 50 ms gap is enough headroom for mtkbt's broadcast dispatch + JNI invocation + T9 syscall chain to complete phase 1 durably before phase 2's file write.
+
+50 ms was chosen because:
+- The working 06:23:50 case had T9 fire ~5 ms after phase 1's wake — i.e., mtkbt scheduling latency was 5 ms there. 50 ms = 10× headroom.
+- Pixel-as-TG emits its PSC=Paused → PSC=Playing transition over ~70-100 ms (from btsnoop_hci 2026-05-18). 50 ms is within that range.
+- Bolt is unlikely to react to the brief PAUSED state (the gap is shorter than any reasonable CT UI debounce).
+
+### Why not use broadcast extras
+
+`com.android.music.playstatechanged` Intent extras carry `playing:Z` but that's a boolean — doesn't encode the 3-state AVRCP play_status (STOPPED/PLAYING/PAUSED). The trampolines could be modified to look at the broadcast extras instead of the file, but that's invasive: T9 lives in mtkbt's address space, the broadcast extras are in Java-side `Intent`, and there's no clean way to plumb them through Android's broadcast→native callback path. Adding a side-channel file `/data/data/com.innioasis.y1/files/y1-pulse-state` that T9 reads via a separate fd would work but adds a third file and an extra read per emit — not worth it for one fix.
+
+The 50 ms Handler delay is the simplest correct solution.
+
+### Implementation
+
+- New file: `src/patches/inject/com/koensayr/y1/playback/PscPulse.smali`
+- `TrackInfoWriter.pulsePlayStatusForCT` reduced to: check `mPlayStatus == PLAYING`, call `PscPulse.fire()`.
+- `patch_y1_apk.py`: PscPulse registered in `PATCH_B5_INJECT_FILES` and the rebuilt-DEX manifest. Debug-mode marker logs for `PscPulse.fire (phase 1)` and `PscPulse.run (phase 2 +50ms)`.
+
+## Trace #77 (2026-05-20) — Plan: mmap-backed y1-track-info for race-free, syscall-free trampoline reads
+
+### Motivation
+
+Pixel-as-TG vs Y1 GEA response latency: 1-3 ms vs 21-30 ms (Trace #74). The 10-20× delta comes from T4's `open` + `SYS_read` + `close` syscall chain reading 1104 bytes from `/data/data/com.innioasis.y1/files/y1-track-info` on EVERY inbound GetElementAttributes from the CT. T5/T6/T8/T9 all do the same syscall chain — order of magnitude 20-50 reads of the same 1104-byte file per minute under normal use, multiplied during track-skip sessions.
+
+Same disk-IO design also produced the PSC pulse race in Trace #76 — T9 reads the file at run time, not at broadcast-queued time, so concurrent writes from the music app can race past T9's invocation. The 50 ms Handler delay is a workaround; the real fix is to eliminate the disk hop entirely.
+
+### Design — file-backed mmap with double-buffered atomic swap
+
+Use mmap'd shared memory between the music app (writer) and mtkbt's bluetooth process (reader). The file lives at the same path (`/data/data/com.innioasis.y1/files/y1-track-info`) so failure paths fall back to the existing `open`+`read` semantics gracefully.
+
+**Schema extension** (1104 B → 2213 B):
+
+| offset | size | content |
+|---|---|---|
+| `0` | 1 B | `active_slot` byte — `0` or `1` — single-byte atomic write |
+| `1..3` | 3 B | RFA padding (align slot[0] to 4) |
+| `4..1107` | 1104 B | **slot[0]** — existing 1104-byte schema (audio_id / title / artist / album / position / status / battery / papp / etc.) |
+| `1108..2211` | 1104 B | **slot[1]** — second copy of the same schema |
+| `2212` | 1 B | RFA padding |
+
+Single-byte atomic store on `active_slot` is race-free on ARMv7 (8-bit aligned `strb`). Reader reads `active_slot` once, dispatches to the corresponding slot. Writer writes to the *other* slot first, then atomically updates `active_slot` to point at the freshly-written one. Reader never sees a partial write because slot[0] and slot[1] are never both being touched simultaneously.
+
+**Writer flow (music app `TrackInfoWriter.flushLocked`):**
+
+```
+mmap once at init  →  mapped_base
+loop {
+    inactive = 1 - mapped_base[0]
+    fill_struct(&local_buf)
+    memcpy(&mapped_base[4 + inactive*1104], &local_buf, 1104)
+    mapped_base[0] = inactive   // atomic byte store
+}
+```
+
+**Reader flow (any trampoline):**
+
+```
+mmap once at first call  →  mapped_base (cached in .bss)
+active = ldrb [mapped_base, 0]
+src = mapped_base + 4 + active * 1104
+memcpy(&local_stack_buf, src, 1104)   // or read individual fields directly
+... existing per-trampoline logic on local_buf ...
+```
+
+The reader takes a snapshot via `memcpy` rather than reading fields in-place from the slot. Snapshot ensures a consistent view even if `active_slot` flips mid-read (we'd read the now-inactive slot, but its contents are still the consistent snapshot from the previous write).
+
+### Why double-buffer vs seqlock
+
+Seqlock requires a retry loop on the reader side and barrier instructions to prevent reordering. ARMv7's memory model is weakly ordered — a naive seqlock without `dmb` barriers would race. Adding `dmb ish` instructions costs cycles and is fiddly to get right in Thumb-2 inline assembly.
+
+Double-buffer needs only:
+- Reader: one `ldrb` (atomic) + memcpy from the chosen slot
+- Writer: memcpy to the inactive slot + one `strb` (atomic) of the new flag
+
+ARMv7 guarantees single-byte `ldrb`/`strb` to aligned addresses are atomic. No barriers needed for the producer-consumer pattern because:
+- Writer completes the inactive-slot memcpy *before* updating the flag
+- Reader reads the flag *before* dereferencing the slot
+- The flag write/read serves as the happens-before edge
+
+Slight memory waste (1104 extra bytes on disk + in the page cache) is the only cost. Trivial.
+
+### Trampoline-side changes
+
+**New .bss bytes** (in `g_avrcp_req_event_database` neighbourhood at vaddr `0xd2b5+`):
+
+```
+g_y1_track_info_mmap_base : 4 B   // pointer to mmap'd region, NULL until lazy-init
+g_y1_track_info_mmap_failed : 1 B  // sticky failure flag — fall back to open+read forever
+```
+
+**New shared subroutine** (`_emit_mmap_track_info_subroutine` in `_trampolines.py`):
+
+```
+mmap_track_info:
+    ldr.w r0, [g_y1_track_info_mmap_base]
+    cbz r0, do_mmap                    // NULL → lazy-init
+    bx lr                              // already mapped → return ptr
+
+do_mmap:
+    ldrb [g_y1_track_info_mmap_failed]
+    cbnz r0, return_null               // previously failed → don't retry
+
+    // open(path_track_info, O_RDONLY, 0)
+    adr_w r0, path_track_info
+    mov   r1, O_RDONLY
+    movs  r2, 0
+    blx   PLT_open
+    cmp   r0, 0
+    blt   set_failed
+
+    // mmap2(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0)
+    mov   r4, r0                       // r4 = fd
+    movs  r0, 0
+    mov   r1, 0x1000                   // 1 page = 4096 B (covers 2213 B file)
+    movs  r2, 1                        // PROT_READ
+    movs  r3, 1                        // MAP_SHARED
+    push  {r0, r1}                     // syscall stack args: pgoff
+    svc   192                          // NR_mmap2
+    add   sp, 8
+    cmp   r0, 0
+    blt   close_and_fail
+
+    // store mapped ptr, close fd, return ptr
+    str.w r0, [g_y1_track_info_mmap_base]
+    mov   r5, r0                       // save ptr across close
+    mov   r0, r4
+    blx   PLT_close
+    mov   r0, r5
+    bx    lr
+
+close_and_fail:
+    mov   r0, r4
+    blx   PLT_close
+set_failed:
+    strb  #1, [g_y1_track_info_mmap_failed]
+return_null:
+    movs  r0, 0
+    bx    lr
+```
+
+Cost estimate: ~80-100 bytes of trampoline code (one-time).
+
+**Per-trampoline read path changes**:
+
+Each trampoline currently does:
+
+```
+adr_w   r0, path_track_info
+movs    r1, O_RDONLY
+movs    r2, 0
+blx     PLT_open                    // ~30 bytes total for the open
+cmp r0, 0
+blt     skip
+mov     r4, r0
+mov     r0, r4
+add_sp_imm r1, OFF_FILE
+movw    r2, 1104
+movs    r7, NR_read
+svc     0                            // syscall — slow
+mov     r0, r4
+blx     PLT_close
+```
+
+Replaced with:
+
+```
+bl      mmap_track_info              // r0 = ptr or NULL
+cbz     r0, fallback_open_read
+ldrb    r1, [r0, #0]                 // active_slot
+add_imm r2, 4
+muls?   ... add r0, r0 to slot start
+mov     r0, slot_src
+add_sp_imm r1, OFF_FILE
+movw    r2, 1104
+blx     PLT___memcpy_chk             // copy slot → stack buffer
+b       after_read
+
+fallback_open_read:
+    ... existing open+read+close path ...
+
+after_read:
+```
+
+Cost estimate: ~30-40 bytes added per trampoline (5 trampolines × ~35 B = ~175 B). 80 B for the mmap subroutine. Total ~255 B added; current debug-build headroom is 504 B, release-build 624 B. Comfortable fit.
+
+### Music-app-side changes
+
+`TrackInfoWriter.flushLocked` currently writes via `FileOutputStream` to a tmp file then `renameTo` for atomic visibility. **Rename creates a NEW inode** — any process that has the old inode mmap'd would see stale content forever. So we must switch to in-place updates.
+
+New `flushLocked`:
+
+```java
+private MappedByteBuffer mTrackInfoMmap;  // lazy-init
+
+private MappedByteBuffer ensureMmap() {
+    if (mTrackInfoMmap != null) return mTrackInfoMmap;
+    try {
+        File f = new File(mFilesDir, "y1-track-info");
+        // Ensure file is exactly 2213 bytes before mmap
+        try (RandomAccessFile raf = new RandomAccessFile(f, "rw")) {
+            raf.setLength(2213);
+        }
+        FileChannel ch = new RandomAccessFile(f, "rw").getChannel();
+        mTrackInfoMmap = ch.map(FileChannel.MapMode.READ_WRITE, 0, 2213);
+        // FileChannel.close() doesn't unmap the buffer per Java spec; mapping persists
+    } catch (Throwable t) {
+        Log.w("Y1Patch", "mmap init failed: " + t);
+        // fallback path leaves mTrackInfoMmap = null; flushLocked uses old write path
+    }
+    return mTrackInfoMmap;
+}
+
+private void flushLocked() {
+    byte[] buf = buildBuf();  // existing 1104-byte struct fill
+
+    MappedByteBuffer m = ensureMmap();
+    if (m != null) {
+        int active = m.get(0) & 0xFF;
+        int inactive = 1 - (active & 1);
+        int slotOffset = 4 + inactive * 1104;
+        m.position(slotOffset);
+        m.put(buf, 0, 1104);
+        m.put(0, (byte) inactive);     // atomic flag flip
+        return;
+    }
+
+    // Fallback: existing tmp+rename path (slower but works without mmap)
+    ...
+}
+```
+
+Java `MappedByteBuffer.put(byte)` is a single STR — atomic on the underlying memory. `put(int, byte)` is similar.
+
+`ensureMmap` is called only on flushLocked (which is synchronized). No concurrent mmap init race.
+
+### Failure modes & fallback
+
+| Failure | Detection | Action |
+|---|---|---|
+| `open(y1-track-info)` returns -ENOENT (file not created yet) | Reader: `bl mmap_track_info` returns NULL | Fall back to existing `open`+`read` path (file might exist via TrackInfoWriter.init by next call) |
+| `mmap2` returns -ENOMEM or -EINVAL | Reader: subroutine sets `g_y1_track_info_mmap_failed = 1`, returns NULL | All future reads use the open+read fallback for this process lifetime |
+| Music app process restart | New mmap on next flushLocked | mtkbt's mmap'd view is stale until music app writes — kernel-managed page cache keeps it consistent |
+| Music app crashes mid-write to inactive slot | Reader's `active_slot` byte still points at the PREVIOUS slot which has the LAST consistent snapshot | Reader gets stale-but-valid data; next successful write resyncs |
+| `setLength(2213)` race between music app and trampoline open | Reader sees a 1104-byte file briefly | Reader's mmap of a 4096-byte page maps the underlying file content; if file is only 1104 B at mmap time, reading offsets > file size returns SIGBUS; need to ensure music app `setLength` *before* writing slot 1 content |
+
+Mitigation for the last one: TrackInfoWriter's `init(Context)` runs on Y1Application.onCreate and `setLength(2213)` before any flush. By the time mtkbt-side trampolines run (after music app is up), the file is already 2213 B.
+
+### Implementation phases
+
+To keep bisection space manageable, ship as separate commits in this order:
+
+**Phase 1 — Music app side: switch from tmp+rename to in-place + schema extension** (one commit)
+- `TrackInfoWriter.init()` sets file length to 2213, writes initial `active_slot = 0` + slot[0] defaults.
+- `flushLocked()` switches to mmap'd `MappedByteBuffer` writes with double-buffer flip.
+- Existing trampolines continue using `open`+`read` (reading slot[0] at offsets `4..1107` works because that's where the new schema places the active default state at init time — but if the active_slot has flipped to 1, trampolines reading offset 0+1104 would see stale data).
+- **Wait, this breaks compatibility with old trampolines**. Phase 1 must include a tiny trampoline shim that ALWAYS reads the active slot (1 extra `ldrb` + add).
+
+Hmm, that means Phase 1 = music-app + trampoline schema understanding. They have to ship together.
+
+Better Phase 1: **trampolines learn double-buffer schema, music app still writes tmp+rename of OLD schema** (1104 bytes). Trampolines look at file size — if 2213, parse new schema; if 1104, parse old. Backward compat.
+
+Then Phase 2: music app switches to in-place double-buffer writes. Trampolines already know how to read it.
+
+Then Phase 3: trampolines switch to mmap (still falling back to open+read).
+
+Let me re-order:
+
+**Phase 1 — Trampolines: read active-slot schema (with backward compat)**
+- Trampolines read `active_slot` byte at file[0], then read slot at `file[4 + active*1104]`.
+- If file size is < 2213, fall back to reading from offset 0 (old schema).
+- Music app unchanged — still writes 1104 bytes at offset 0 (which corresponds to `active_slot=0` + 3 bytes RFA + first 1100 bytes of slot[0] — wait, that doesn't work; the byte at offset 0 in the old schema is part of audio_id, not 0).
+
+Bad backward compat. Old schema has audio_id at file[0..7]. New schema has `active_slot` at file[0].
+
+Alternative: trampolines DETECT new vs old schema by checking file size at mmap/read time. If file size is exactly 1104, use old offsets. If file size is 2213, use new offsets.
+
+Phase 1: Music app extends file to 2213 bytes. file[0..3] = active_slot + padding (initialised to 0). file[4..1107] = slot[0] (new home of audio_id etc.). file[1108..2211] = slot[1] (zero-filled until first flip). Music app writes both slots? No — only writes inactive slot then flips. On init, both slots are zero or have the same content.
+
+flushLocked writes to inactive slot. So first flush: active=0 initially, inactive=1, writes slot[1], flips to active=1. Second flush: active=1, inactive=0, writes slot[0], flips to active=0. And so on.
+
+Trampolines see size=2213 → parse active_slot, dispatch to correct slot.
+
+If trampolines are deployed BEFORE music app's phase 1 (e.g., separate flash of /system/lib/libextavrcp_jni.so without music app update), the trampoline would size-check, see 1104 (old file size), and use old offsets. Music app's old writes still land at offsets 0..1103 which is what trampolines read.
+
+OK Phase 1 split:
+
+**Phase 1a — Trampolines: dual-schema reads** (small commit)
+- Add file-size check
+- If size >= 2213: read active_slot, dispatch to slot
+- Else: read offset 0 as before (old behaviour)
+- Compatible with old music app
+
+**Phase 1b — Music app: extend file to 2213 bytes, write to inactive slot, flip active_slot** (separate commit)
+- Music app's flushLocked switches to active-slot-aware
+- File grows from 1104 to 2213 bytes on first flush
+- tmp+rename path drops in favour of in-place write (slot writes are bounded to one slot; flag flip is atomic)
+
+After Phase 1b: Y1's pipeline works with the new schema. Race-free across writes because writer never touches the slot reader is currently using.
+
+**Phase 2 — Trampolines: mmap-backed reads with open+read fallback**
+- New `mmap_track_info` subroutine in trampoline blob
+- Each trampoline tries `bl mmap_track_info`; if NULL falls back to `open`+`read`
+- Latency drops from ~30 ms to ~5 μs per read
+
+After Phase 2: GEA latency hits parity with Pixel-as-TG (~1-3 ms).
+
+**Phase 3 — Music app: mmap-backed writes** (optional)
+- TrackInfoWriter writes via MappedByteBuffer directly (no kernel write syscall on the hot path)
+- Marginal perf gain on the writer side (writes are already infrequent)
+- Worth doing only if Phase 1b's FileChannel writes become a bottleneck (unlikely)
+
+### Verification per phase
+
+**Phase 1a (trampoline dual-schema)**: existing 1104-byte file continues to work. Run TV/Sonos/Bolt/Kia captures to verify no regression. T9ps/T5tc emit rates unchanged.
+
+**Phase 1b (music app double-buffer)**: file size = 2213 B post-init. `od -An -tx1 -N1 y1-track-info` shows alternating `00` / `01` after track changes. Trampolines read correct slot content.
+
+**Phase 2 (mmap)**: GEA response latency measurement — EXTADP_AVRCP timestamps should drop from ~21 ms to <5 ms. Bolt's GEA-burst-of-3 should now get all 3 responses before Bolt times out.
+
+### Cost / benefit summary
+
+| | Current | Post-mmap |
+|---|---|---|
+| GEA response latency | 21-30 ms | <5 ms (Pixel parity) |
+| Reads per minute | 20-50 | 0 (memory loads only) |
+| Disk I/O on hot path | ~150 syscalls / 5 min session | 0 |
+| LOAD #1 budget impact | n/a | ~255 B (504 B free in debug, 624 B in release) |
+| File size on disk | 1104 B | 2213 B (~2× — negligible) |
+| Code risk | n/a | Medium — touches all 5 trampoline read paths + music app's flushLocked |
+| Bisection space | n/a | 4 commits (Phase 1a, 1b, 2, optional 3) |
+
+### Decision
+
+Worth doing — closes the last remaining significant performance delta vs Pixel. Phase 1a+1b are the prerequisite; Phase 2 is the actual win. Phase 3 is optional.
+
+If the Bolt 0625-followup capture (post the 50 ms Handler delay fix from Trace #76) shows the metadata freeze is GONE, this plan becomes a "Pixel parity polish" effort rather than a critical fix. If the freeze persists, Phase 2's lower latency may also help — Bolt's GEA bursts arrive within ~80 ms and Y1's current ~25 ms per response means Bolt sometimes moves on before we answer.
+
+Wait for Bolt 0625-followup capture before committing time to this.
+
+## Trace #78 (2026-05-20) — Kia 0707: rate-limit gate eats PositionTicker ticks; resetWakeRateLimit bypass
+
+### User report
+
+"New test seems to have improved response times on the Kia but it regressed track position a bit. Track length updates but track position does not (at least after the initial tick)."
+
+### Big-picture shift on Kia
+
+Kia 0707 vs Kia 2107 (the previous capture before P_PN0/P_PN1 + rate-limit + ProviderName + PSC pulse landed):
+
+| metric | Kia 2107 | Kia 0707 |
+|---|---|---|
+| T2reg total | 0 | **143** |
+| ev=05 PlaybackPosition | 0 | 47 |
+| ev=09 NowPlayingContent | 0 | 45 |
+| ev=01 PlaybackStatus | 0 | 34 |
+| ev=02 TrackChanged | 0 | 13 |
+| T5tc TrackChanged emits | 0 | 12 |
+| T9ps PlaybackStatus emits | 0 | 33 |
+| T9papp PApp emits | 0 | 2 |
+
+**Kia switched from polling-only to subscribe-based.** Most likely cause: the ProviderName=" " addition (P_PN0/P_PN1 in `f19ad7c`). Kia's SDP parser was probably rejecting Y1's TG record absent `0x0102`, falling back to GEA polling. With ProviderName present the record passes Kia's validation and Kia subscribes normally.
+
+This is the biggest CT-side behavior shift we've seen from a single patch. It validates the Pixel-parity SDP analysis from Trace #74.
+
+### The regression — PositionTicker ticks getting eaten
+
+Comparing PositionTicker firings to Kia's ev=05 RegNotif acks (Kia strict §6.7.1 = one re-register per PPC CHANGED received):
+
+- 86 `PositionTicker.run` firings (Y1Patch trace)
+- 47 Kia ev=05 RegNotifs (M5 cave on inbound)
+- **~39 ticks lost between Java-side wake and AVCTP wire emit**
+
+Position values in `y1-track-info` are tracked correctly — `fL.pos` log markers show ms-accurate growth (e.g., 9301ms → 9301ms-anchored, 153ms → 153ms-anchored after a track edge, advancing to 10026ms ~10 s later). So the music app is computing position correctly, T9 has access to correct file content. The gap is elsewhere.
+
+### Root cause
+
+The 800 ms rate-limit gate in `wakePlayStateChanged` (commit `105eef5`):
+
+```
+if (now - mLastWakePlayStateAt < 800ms && mPlayStatus == mLastWakePlayStatus):
+    return // suppress broadcast
+```
+
+Designed to coalesce the 3-wake cascade around track edges (onPlayValue + onPrepared + onPlayerPreparedTail in <200 ms succession, same mPlayStatus). But PositionTicker's 1 Hz heartbeat with PLAYING status also matches "same status AND <800 ms" when:
+
+1. PSC pulse phase 2 fires at track-edge settle (sets `mLastWakePlayStateAt` = now, `mLastWakePlayStatus` = PLAYING)
+2. PositionTicker tick lands 600-900 ms later (still PLAYING)
+3. Gate: `now - mLastWakePlayStateAt < 800` AND `PLAYING == PLAYING` → **SUPPRESS**
+4. No broadcast → mtkbt's BluetoothAvrcpReceiver doesn't fire → T9 doesn't run → no PPC CHANGED on the wire
+
+After the next status edge (PAUSE/PLAY toggle, or natural state transition) the gate clears and PositionTicker resumes — until the next pulse fires, repeating the cycle.
+
+User's exact symptom: "Track length updates but track position does not after the initial tick." The initial tick that DOES work is the PSC pulse's phase 2 emit (which includes a POSITION CHANGED in T9's run because file[792]==1 after phase 2 write). Subsequent PositionTicker ticks get gated until the next status edge.
+
+### Fix
+
+PositionTicker.run resets the rate-limit state before each `wakePlayStateChanged`:
+
+```smali
+.method public run()V
+    sget-object v0, TrackInfoWriter.INSTANCE
+    invoke-virtual {v0}, resetWakeRateLimit()V    ← new
+    invoke-virtual {v0}, wakePlayStateChanged()V
+    ... re-post Handler ...
+```
+
+`resetWakeRateLimit()` writes `mLastWakePlayStateAt = 0`. The gate's delta calculation `now - 0` then evaluates to a huge value, bypassing the suppression. Status-edge cascades around track changes still get coalesced because their call sites don't reset.
+
+PositionTicker.run remains the single source of 1 Hz heartbeat — the gate now applies only to the cascading wakes that motivated it.
+
+### Why not lower the rate-limit threshold
+
+Considered changing 800 ms → 400 ms or 300 ms. Two reasons against:
+
+1. **No principled threshold value**: PositionTicker is nominally 1000 ms but observed cadence is 0.7 Hz (some ticks run late under load). A 400 ms threshold would still occasionally suppress.
+2. **Track-edge cascades have variable spacing**: the 3 wakes around a track edge land 150-300 ms apart on slow days, 50-100 ms apart under load. A 400 ms threshold catches the typical case but a 200 ms threshold would miss bursts under load. The current 800 ms generously covers all cascade timings — preserving that for cascades while letting PositionTicker bypass is the right call.
+
+### Why not differentiate by `mPlayStatus`
+
+Considered: gate only when `mPlayStatus` is unchanged. Already done. The problem is that cascade wakes AND PositionTicker ticks both have unchanged status during steady playback. Bypass-by-caller is the clean separation.
+
+### Side note on the Kia subscription shift
+
+This is a strong signal that the ProviderName addition was load-bearing. Hypothesis: Kia's CT-side SDP parser rejected the Y1 TG record before P_PN0/P_PN1 because attribute `0x0102 ProviderName` was missing, falling back to polling-only metadata refresh. With ProviderName present, Kia accepts the TG and uses subscribe-based refresh.
+
+If true, this same path may also affect any other CT in the matrix that's been "lagging" (Kia's lag was traced to polling cadence). Worth re-running the TV / Sonos captures after this commit to see if their behavior changed too.
+
+## Trace #79 (2026-05-20) — onTrackEdge dedup leaks markCompletion's "frozen at duration" anchor into the next track's re-prepare
+
+### User report
+
+After commit `8e4b23e` (PositionTicker rate-limit bypass), Kia's position display works correctly EXCEPT: "a quick freeze on the first track played after connecting. It was as if the track playhead was at the end of the track. Not advancing but 'complete' even though audio was still playing. It fixed itself when the track advanced."
+
+### Symptom decomposition
+
+- "First track played after connecting" = after a BT disconnect + reconnect cycle
+- "Audio was still playing" = PlayerService is actually playing the track
+- "Playhead at end of track" = CT renders position ≥ duration
+- "Not advancing" = each PPC CHANGED carries the same/clamped value
+- "Fixed itself when the track advanced" = the second track displays correctly
+
+### Trace
+
+Pre-condition: previous session ended with a natural track end.
+
+1. **Previous session, T = T0**: track plays to natural end → `markCompletion()` runs:
+   - `mPositionAtStateChange = mLastKnownDuration` (intentional "freeze at end")
+   - `mStateChangeTime = elapsedRealtime() at T0`
+   - **`mPlayStatus` STAYS at 1 (PLAYING)** — markCompletion intentionally doesn't change it
+   - `mPendingNaturalEnd = true` (latch)
+   - `flushLocked()` writes: `file[780..783]=duration, file[784..787]=T0, file[792]=1`
+   - PositionTicker stops (via onCompletion path)
+
+2. **BT disconnect**. Music app keeps running. State persists in memory + file.
+
+3. **T = T1 (some hours later)**: user reconnects to Kia.
+
+4. **T = T1+ε**: user presses PLAY on Y1's hardware button.
+
+5. PlayerService.play() → `restartPlay(false)`:
+   - `pause()` → `setPlayValue(3)` PAUSED
+   - `PlaybackStateBridge.onPlayValue` v0=2 → markTrackChange suppression active → **skip both setPlayStatus AND wake** → `mPlayStatus` stays 1, file unchanged
+   - `toRestart()` → `setDataSource(samePath)` → `onEarlyTrackChange` → `onFreshTrackChange()`:
+     - resets `mPositionAtStateChange=0, mLastKnownDuration=0, mStateChangeTime=T1`
+     - `flushLocked()` writes file with fresh values
+   - `prepareAsync()` completes → `OnPreparedListener` → `onPrepared` → `onTrackEdge()`:
+     - Latches `mPendingNaturalEnd` → `mPreviousTrackNaturalEnd = true`
+     - Clears `mPendingNaturalEnd`
+     - **Compares new audio_id vs snapshot — SAME (same track)**
+     - **`:cond_same_track` taken — NO position reset**
+   - `setPlayValue(1)` PLAYING → `setPlayStatus(1)`:
+     - `mPlayStatus` is already 1 → **early-return, no flush, no state update**
+
+6. Result: file state from `onFreshTrackChange` survives (`pos=0, state_time=T1, ps=1`). **No regression here in this trace** — onFreshTrackChange already reset to 0.
+
+Wait — re-tracing, the bug doesn't fully reproduce in this path because `onFreshTrackChange` runs via `onEarlyTrackChange` *before* `onTrackEdge`. The reset DOES happen.
+
+### Re-investigation — the actual bug path
+
+The bug requires a path where `onEarlyTrackChange` doesn't fire. That happens when PlayerService.play() does NOT call `restartPlay(false)` — e.g., when MediaPlayer is at EOS state and `start()` is called directly without re-preparing. Y1's IjkMediaPlayer's behavior in this case is engine-dependent; some implementations replay from start, others throw, others go through prepare again.
+
+In the path WITHOUT onEarlyTrackChange:
+
+5'. User presses PLAY.
+6'. PlayerService.play() — internal logic might call `MediaPlayer.start()` directly on the EOS'd player. No setDataSource. No onEarlyTrackChange.
+7'. MediaPlayer might either:
+    - (a) refuse → user has to press again, restartPlay kicks in
+    - (b) silently transition back to PLAYING from EOS → onPrepared **does NOT fire** (no fresh prepare)
+    - (c) auto-reprepare → onPrepared fires → `onTrackEdge` → dedup → **no reset**
+8'. In paths (b) and (c), `mPositionAtStateChange` stays at `duration` (from markCompletion). `mStateChangeTime` stays at `T0`. file stays at `(duration, T0, 1)`.
+9'. PositionTicker resumes (via onPlayValue(1) cascade). Ticks fire. T9 reads file:
+    - `saved_pos = duration`
+    - `state_change_time = T0`
+    - `live_pos = duration + (T_now - T0)` — past end
+10'. Kia clamps to duration display → "at end, frozen".
+11'. When user manually skips to next track or natural advance fires, `onEarlyTrackChange` runs (because `toRestart()` is now invoked with a new path), resetting everything. Display fixes.
+
+### Fix
+
+Path (c) — onPrepared fires but onTrackEdge's dedup skips reset — is the cleanest to handle. We have an existing signal: `mPreviousTrackNaturalEnd` is latched from `mPendingNaturalEnd` at `onTrackEdge` entry. Use it as a second reset trigger:
+
+```smali
+:try_start_0
+... existing latch transfer ...
+
+iget-wide v0, mCachedAudioId
+invoke-direct flushLocked
+
+# Two reset triggers (changed):
+iget-boolean v4, mPreviousTrackNaturalEnd
+if-nez v4, :cond_force_reset    ; EOS replay of same track
+
+iget-wide v2, mCachedAudioId
+cmp-long v4, v0, v2
+if-eqz v4, :cond_same_track     ; audio_id unchanged AND not EOS-replay → no reset
+
+:cond_force_reset
+... reset position to 0, flushLocked ...
+
+:cond_same_track
+```
+
+After fix:
+- Same-track re-prepare with no natural-end (pause→resume cycles): `mPreviousTrackNaturalEnd=false`, audio_id unchanged → `:cond_same_track` → no reset (existing semantic preserved)
+- Same-track re-prepare AFTER natural end: `mPreviousTrackNaturalEnd=true` → `:cond_force_reset` → reset
+- Audio_id changed: → `:cond_force_reset` → reset (existing behavior)
+
+For paths (a) and (b), the fix doesn't help directly because onTrackEdge isn't called. But path (a) eventually goes through restartPlay (which fires onEarlyTrackChange → onFreshTrackChange — unconditional reset). Path (b) is genuine MediaPlayer-internal replay; if no onPrepared fires, T9 keeps emitting inflated live_pos until a real track edge. We accept that as a residual edge case.
+
+### Implementation
+
+Single edit in `TrackInfoWriter.onTrackEdge()` adding the `mPreviousTrackNaturalEnd` check ahead of the audio_id comparison. The natural-end latch was already being read and propagated — we just use it for one more decision.
+
+Zero new fields. Zero changes to other methods. The reset block code path is identical (now reached by an additional condition).
+
+### Verification post-fix
+
+Next capture should show:
+- After a natural track end (last track of session) + BT reconnect + press play, the new T5tc/T9ps/PSC pulse sequence carries `pos=0` not `pos≥duration`
+- Kia display advances from 0:00 for the first track of the session
+- No regression on Bolt's existing track-switch behavior (audio_id changes → reset path; same-track re-prepare with active playback → no natural-end latch → no spurious reset)
+
+---
+
+## Trace #80 — 2026-05-20 Pixel-as-TG audit, Y1 deviation map
+
+### Trigger
+
+Bolt 1242 capture (`/work/logs/dual-bolt-20260520-1242/`) showed Y1 emitting healthy GetEA RSP + PASSTHROUGH ACKs but zero `msg=544`, zero `T2reg`, zero `size:13 RegNotif` inbound — Bolt connected with cached bond, sent PLAY + ONE GetEA query at 12:42:42, no subscriptions all session, no display refresh after the FORWARD-triggered + natural auto-advance track changes that followed. User flagged "did not display any metadata this time" and established a durable rule: **for every AVRCP TG design question, first ask "what does the Pixel 4 in AVRCP 1.3 mode do?"** Pixel↔Bolt btsnoop is at `/work/logs/pixel4-bugreport-20260518-1959/FS/data/misc/bluetooth/logs/btsnoop_hci.log`.
+
+### Original hypothesis (wrong)
+
+Initial framing: Y1's session-scope subscription gate (`g_avrcp_req_event_database` in `libextavrcp_jni.so` .bss, wiped on every JNI lib load) is too strict — when Y1 reboots while the CT's AVRCP L2CAP channel persists, our DB drops to zero while the CT still considers itself subscribed; subsequent state-edge `wakeTrackChanged` / `wakePlayStateChanged` calls are gated to NOPs even though the CT is waiting for CHANGEDs. Proposed "emit preemptive CHANGED on state edge regardless of DB state, matching Pixel" — citing INVESTIGATION.md lines 2884/2903 as evidence Pixel emits unsolicited CHANGED outside §6.7.1.
+
+### Audit, byte-by-byte against the Pixel↔Bolt btsnoop
+
+Parsed every Pixel↔Bolt AVRCP frame with `tshark -V`. Key findings:
+
+**TID handling**: traced TIDs for PSC across frames 632 → 1359:
+
+| Frame | Dir | Kind | TID | Notes |
+|---|---|---|---|---|
+| 632  | CMD | Notify | 0x2 | initial subscribe |
+| 633  | RSP | Interim | 0x2 | Pixel echoes |
+| 730  | RSP | **Changed (unsolicited)** | **0x2** | uses stored TID=0x2 from frame 632 |
+| 741  | CMD | Notify | 0x2 | Bolt re-registers same TID |
+| 921  | RSP | Changed (unsolicited) | 0x2 | still uses 0x2 |
+| 926  | CMD | Notify | 0xe | Bolt **switches TID** |
+| 937  | RSP | Changed (unsolicited) | **0xe** | Pixel **updates stored TID** |
+| 1080 | RSP | Changed (unsolicited) | 0x6 | (Bolt switched again at frame 945) |
+| 1350 | RSP | Changed (unsolicited) | 0xe | (Bolt switched back at 1091) |
+
+Pixel's "unsolicited CHANGED" is **gated on having a stored per-event TID from a prior `RegisterNotification` CMD on the current L2CAP channel**. The stored TID updates every time the CT issues a fresh `Notify`. When Pixel has no stored TID for an event (= CT never subscribed), Pixel **does not emit** CHANGED for that event.
+
+This is byte-for-byte what Y1's `g_avrcp_req_event_database` + `_emit_check_event_subscribed` + `_emit_restore_conn_tid_from_db` already implement. **The original "preemptive CHANGED" fix premise was wrong** — Pixel does NOT emit when its database equivalent is empty. The earlier INVESTIGATION.md observation at line 2884 ("emits CHANGED unsolicited on every value change, doesn't wait for re-registration") is correct *only when the DB is populated*; once the DB has a stored TID, Pixel doesn't wait for re-register before emitting. The pre-DB-populate case is identical between Pixel and Y1.
+
+### Full Pixel ↔ Y1 deviation table
+
+| Behavior | Pixel | Y1 Current | Match? |
+|---|---|---|---|
+| GetCapabilities Events count | 8 | 8 | ✓ |
+| GetCapabilities Events list | 01,02,05,08,09,0a,0b,0c | same (T1\_ADVERTISED\_EVENTS) | ✓ |
+| GetCapabilities Companies | Bluetooth SIG only (00:19:58) | stock libextavrcp default | ✓ (single SIG companyID) |
+| GetEA: missing-attr handling | omit from response | emit `valueLen=0` (E1 patch) | **NO** |
+| GetEA: charset | UTF-8 (106) | UTF-8 | ✓ |
+| PASSTHROUGH RSP ctype | Accepted (0x09) | stock libextavrcp (Accepted) | ✓ |
+| InformDisplayableCharacterSet (PDU 0x17) RSP | Rejected (Invalid Command) | NOT\_IMPLEMENTED via UNKNOW\_INDICATION | ✓ (both reject) |
+| RegNotif first RSP ctype | Interim (0x0F) | Interim | ✓ |
+| RegNotif follow-up RSP ctype | Changed (0x0D) | Changed | ✓ |
+| Per-event TID echo on CHANGED | stored TID from RegNotif CMD | `g_avrcp_req_event_database` | ✓ |
+| Preemptive CHANGED on state edges | yes, uses stored TID | yes, gated on DB[event_id]≠0 | ✓ |
+| Emit CHANGED when DB empty | NO | NO | ✓ |
+| Clear subscription state on GetCap | NO (cleared on L2CAP disconnect) | YES (T1\_extended.clear\_event\_database) | NO (deliberate Y1 workaround for the .bss-persists-across-CT-churn model) |
+| PSC INTERIM initial PlayStatus | current state | current state | ✓ |
+| TC INTERIM Identifier | 0x00...00 (selected) | 0x00...00 | ✓ |
+| TC CHANGED Identifier | per-track counter | per-track counter | ✓ |
+| PPC CHANGED cadence | ~1 Hz | 1 Hz (PositionTicker) | ✓ |
+| Track-edge emit set | PPC=0, TC, NPCC | T5 emits same triple | ✓ |
+| SetPlayerApplicationSettingValue (PDU 0x14) | Rejected (Invalid Param) | Accepted (T_papp implements Repeat+Shuffle) | NO (deliberate Y1 feature — Pixel doesn't support PApp) |
+| BluetoothProfileDescList AVRCP version | 0x0103 | 0x0103 (V1 patch) | ✓ |
+| SupportedFeatures bits | 0x0001 | 0x0001 (V8 patch) | ✓ |
+| AVCTP TID per-event tracking | yes | yes (since d4efb6c) | ✓ |
+
+### Net conclusions
+
+**Y1 is Pixel-equivalent on every load-bearing wire behavior.** The only non-deliberate deviation is **E1**: libextavrcp.so emits zero-length attribute entries for unsupported AttributeIDs in GetEA responses; Pixel omits them entirely. The §5.3.4 strict reading (E1's original justification) is ambiguous on whether unsupported attrs must emit `valueLen=0` or may be omitted; Pixel takes the omit interpretation.
+
+**Bolt 1242's "no metadata displayed" symptom is not addressable from Y1 side.** Bolt did not send `RegisterNotification` in this session; without subscriptions, Pixel-equivalent behavior is silence (no `msg=544` outbound), and Bolt's lack of re-query after the FORWARD+auto-advance keeps its display stale. We do not have evidence of any wire byte we could change that would induce Bolt to subscribe — the prior Bolt 0625 session, which did subscribe, used byte-identical Y1 SDP + GetCapabilities responses.
+
+This shape also matches Kia's ~11% per-session polling-mode rate (see Trace #79's table) — CT-side subscription decisions vary across sessions for reasons not visible to the TG.
+
+### Open decision: revert E1?
+
+E1 is the one non-deliberate Pixel deviation. Reverting:
+
+- Removes `[E1] GetElementAttributes empty-attr drop -> NOP (§5.3.4 zero-length emit)` from `patch_libextavrcp.py` PATCHES list
+- Net wire delta: GetEA RSP no longer carries `attr_id=0x08` (BIP cover handle, always empty on Y1) and any other attrs T4 emits with `valueLen=0`
+- Risk: if any untested CT relied on the zero-length entries, that CT loses an entry it expected. No evidence such a CT exists in the test matrix.
+- Net: byte-for-byte Pixel parity on GetEA shape.
+
+Reverting **does not** fix Bolt 1242 (E1's behavior was never triggered there — all 7 attrs Bolt requested had data). It is a clean Pixel-parity improvement with no clear downside, but should land with explicit user sign-off given E1's deliberate prior addition.
+
+### Open decision: capture Bolt with pre-pair-initiated `dual-capture.sh`
+
+To narrow whether Bolt 1242's no-subscribe behavior is repeatable or session-state-dependent, capture the next Bolt session with `dual-capture.sh` started BEFORE pairing (or at least before AVRCP channel open). The pre-pair window will contain `connect_ind`/`CONNECT_CNF` and any GetCapabilities + RegNotifs in the clear, letting us see whether Bolt is doing the handshake at all.
+
+---
+
+## Trace #81 — 2026-05-20 mmap-backed y1-track-info shipped (Trace #77 implementation)
+
+User direction (post-Trace #80 audit): "Can we implement [mmap] anyway, and then revisit this problem? The on-disk approach always seemed a bit janky to me."
+
+### Shipped
+
+**Music app side** (`TrackInfoWriter.smali`):
+- Schema bumped 1104 B → 2213 B: `file[0]=active_slot, file[1..3]=RFA, file[4..1107]=slot[0], file[1108..2211]=slot[1], file[2212]=RFA`.
+- `prepareFilesLocked()` calls `ensureFile("y1-track-info", 2213)` so the file exists at full size before any trampoline tries to mmap it.
+- `flushLocked()` rewritten: open as `RandomAccessFile("rw")`, `setLength(2213)` defensively, read active_slot byte, compute `inactive = 1 - (active & 1)`, seek to `4 + inactive*1104`, write the 1104-byte image, atomic single-byte `write(int)` at file[0] to flip the active flag. Reader (mtkbt-side mmap) sees a consistent slot at all times because the slot the reader's `active_slot` byte points at is never the one in flight.
+- The tmp + rename atomic-write path is gone. The race window Trace #77 motivation flagged (tmp + rename creates a fresh inode, orphaning a mapped reader's page) is structurally eliminated.
+
+**Trampoline side** (`_trampolines.py`):
+- New `.bss` cache slot `g_y1_track_info_mmap_base` at vaddr `0xd2cc` (4 bytes, between `g_y1_avrcp_track_identifier` and stock `g_avrcp_auto_browse_connect`).
+- New `get_or_init_mmap` subroutine: lazy-init on first call, opens `y1-track-info`, `mmap2(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0)`, closes fd, caches ptr. No sticky failure flag — every miss retries (handles the case where the music app hasn't created the file yet at first trampoline call).
+- New `read_track_info(r0=dst, r1=nbytes)` subroutine: bl get_or_init_mmap → if non-NULL, dispatch active_slot and byte-copy `nbytes` from `mmap_base + 4 + active*1104` into dst. On NULL, returns 0 and leaves dst untouched (caller's preceding `memset` already zeroed it).
+- T4 / T5 / T6 / T8 / T9 / extended_T2's 8-byte track_id read all converted from inline `open + read + close` to a single `bl read_track_info`. The old per-trampoline `t*_skip_track_read` labels remain (no-op fall-through) for downstream compatibility.
+
+**Patcher MD5s** (`patch_libextavrcp_jni.py`):
+- `OUTPUT_MD5` and `OUTPUT_DEBUG_MD5` set to `None` for this commit. Patcher prints the computed MD5 on first flash without erroring. Update them once a clean flash + capture cycle confirms the new bytes are correct.
+
+**Trampoline blob size**: 3540 B with new subroutines, before per-site conversion. After the initial 6 conversions: 3388 B. After folding T_papp's two gc paths into `read_track_info` (with new `slot_offset` r2 parameter): 3340 B (-56 B vs the pre-mmap baseline). Budget 4020 B, 680 B free.
+
+### `read_track_info` ABI
+
+```
+Pre:  r0 = dst buffer, r1 = nbytes (1..1104), r2 = slot_offset (0..1103).
+Post: r0 = nbytes copied (success) or 0 (mmap unavailable).
+      r4..r11 preserved.
+src = mmap_base + 4 + (active_slot * 1104) + slot_offset
+```
+
+All current readers pass `r2 = 0` except T_papp's PDU 0x13 GetCurrent paths, which pass `r2 = 795` to read the 2-byte repeat+shuffle block within the active slot.
+
+### Known limitations (not blockers; tracked for follow-up)
+
+- **Upgrade from an older firmware** that wrote a 1104-byte file: `setLength(2213)` extends the file on the first new-schema flush, but `file[0]` momentarily holds whatever the OLD schema's audio_id LSB was — could be any byte. Trampolines reading during that one-flush window dispatch to whichever slot the byte's low bit points at, then read mostly-zero (new tail) or partial-old data. Stabilises after the first flush. Single-flush transient; acceptable.
+
+### Open question (preserved from Trace #80)
+
+The Bolt 1336 "metadata froze after 2-3 s of playback" symptom remains unexplained. Wire data verified Pixel-equivalent; mmap doesn't change a byte going out on the wire, only the latency profile. Hypothesis pending wire-byte capture: Y1's 644-byte GetEA RSP frame structure may differ subtly from Pixel's 70-byte response in a way Bolt's parser dislikes. Next investigation step: add a trampoline-side `_emit_native_log_u32` byte-dump of the outbound GetEA RSP, compare against Pixel's btsnoop frame-for-frame.
+
+---
+
+## Trace #82 — 2026-05-20 T5 emit order: NPCC-first → Pixel-parity PPC-first
+
+### Trigger
+
+User recalled an earlier observation: Pixel pre-sets track position to 0:00 before starting the next song, so the playhead is already at 0:00 when audio begins. Y1's behavior appeared opposite — position lingered briefly before snapping to 0:00 / 0:01. Asked whether the Trace #80 audit had missed this. It had.
+
+### What Pixel does (re-parsed from `/work/logs/pixel4-bugreport-20260518-1959/.../btsnoop_hci.log`, frames 961–973 around a FORWARD press)
+
+```
+100.517 s  Rcvd PASS-THROUGH FORWARD (Pushed)
+100.518 s  Sent PASS-THROUGH Accepted
+100.559 s  Rcvd PASS-THROUGH FORWARD (Released)
+100.559 s  Sent PASS-THROUGH Accepted
+100.599 s  Sent Changed - PlaybackPositionChanged - SongPosition: 0ms
+100.604 s  Sent Changed - TrackChanged - 0x0000000000000002
+100.633 s  Sent Changed - NowPlayingContentChanged
+100.657 s  Rcvd Status - GetElementAttributes
+100.659 s  Sent Stable - GetElementAttributes - Title: "DANCE WITH ME"
+100.663 s  Sent Changed - PlaybackPositionChanged - SongPosition: 6ms
+```
+
+Order: **PPC=0 → TC → NPCC**, within 34 ms. Pixel emits PPC=0 first so the CT zeroes the playhead before processing TC. NPCC fires last as content notification.
+
+### What Y1 was doing
+
+T5's track-edge burst emit order in `_emit_t5` was:
+
+```
+NPCC (0x09) → PPC (0x05) → TR_END (0x03, cond) → TC (0x02) → TR_START (0x04, cond)
+```
+
+NPCC first — the now-playing refresh hits the CT while the CT still considers the OLD track to be the "selected" one. The CT's now-playing list re-query lands against the OLD track context. PPC=0 follows but applies to a track ID the CT doesn't know changed yet. TC arrives last, only then is the new track ID registered. Net visible-on-screen effect: brief moment of old-track-at-position-0 (or stale position lingering) before TC forces metadata re-query.
+
+### Fix
+
+Reordered to match Pixel's wire sequence: **PPC → TC → NPCC**. TR_END / TR_START remain in T5, emitted AFTER the Pixel-parity triple — Pixel doesn't advertise events 0x03 / 0x04 (GetCap Events list = `01 02 05 08 09 0a 0b 0c`), so their order is undefined relative to Pixel's behavior; keeping them post-TC preserves backward compat for any subscription-class CT that subscribes to them via T8 INTERIM.
+
+Conservative scope:
+- Reorder only — no events dropped, no payloads changed
+- T8 still advertises 0x03 / 0x04 INTERIM responses (subscription path)
+- TR_END gate still requires `file[793] = 1` (natural-end flag) AND `database[3] != 0`
+- Each emit's existing TID-restore + payload-build logic unchanged
+
+### Regression-risk surface
+
+- **TV / Sonos / Kia**: current captures all work with the NPCC-first order. Reordering changes wire behavior for every CT, not just Bolt. Mitigation: smoke-test all four CTs before claiming success.
+- **Bolt freeze**: untested whether the reorder addresses the Bolt 1336 "metadata frozen after 2-3 s" symptom. Other Trace #80/#81 hypotheses (wire-byte structural mismatch) are still candidates.
+- **Spec position**: AVRCP 1.3 doesn't mandate order for unsolicited CHANGED bursts. Reorder is spec-permissible.
+
+### Blob impact
+
+Pure code reorder, same byte count (3344 B post-reorder = 3344 B pre-reorder). 676 B free of 4020. No budget risk.
+
+---
+
+## Trace #83 — 2026-05-20 y1-trampoline-state → .bss (eliminate per-fire syscalls)
+
+### Motivation (from prior session's mmap-cleanup review)
+
+Post-mmap-rework, `y1-track-info` is served from page-cache RAM via the shared inode trick. The remaining on-disk surface inside the AVRCP hot path was `y1-trampoline-state` — a 24-byte file read + written by T4 / T5 / T9 on EVERY fire (PositionTicker 1 Hz → 1 T9 fire/sec, plus track edges → T5 + T9). Three syscalls per read (open + read + close), three per write. Same-process only (mtkbt's `libextavrcp_jni.so` is the only reader and writer), so no cross-process plumbing required.
+
+### Design
+
+13-byte `.bss` block at `G_Y1_TRAMPOLINE_STATE_VADDR = 0xd2a4` — the unallocated padding at the very start of `.bss` (between `__bss_start` / `_edata` and the first real stock symbol `g_avrcp_req_event_database` at `0xd2b5`). 17 B available; 13 B used. Same per-slot layout as the on-disk schema:
+
+```
+state[0..7]  last_seen track_id  (T4 / T5 edge detection)
+state[8]     (reserved — was last RegNotif transId; dropped, per-event TIDs
+              live in g_avrcp_req_event_database)
+state[9]     last_play_status    (T9 edge detection)
+state[10]    last_battery_status (T9)
+state[11]    last_repeat_avrcp   (T9 papp edge)
+state[12]    last_shuffle_avrcp  (T9 papp edge)
+```
+
+Two new shared subroutines mirror the `read_track_info` pattern:
+
+- `read_state_block(r0=dst, r1=nbytes, r2=state_offset)` — PC-rel literal → absolute vaddr → byte-copy nbytes from `state[state_offset]` to dst stack buf.
+- `write_state_block(r0=src, r1=nbytes, r2=state_offset)` — mirror, src/dst reversed.
+
+Per-site conversion: T4 / T5 / T8 / T9 / extended_T2's six `open + read + close` and four `open + write + close` chains all collapse to `bl read_state_block` / `bl write_state_block`.
+
+### Per-fire syscall savings
+
+| Trampoline | Old syscalls | New syscalls | Δ |
+|---|---|---|---|
+| T4 (read+write) | 6 | 0 | -6 |
+| T5 (read+write) | 6 | 0 | -6 |
+| T8 (read only)  | 3 | 0 | -3 |
+| T9 (read+write) | 6 | 0 | -6 |
+| extended_T2 (write only) | 3 | 0 | -3 |
+
+PositionTicker drives T9 at 1 Hz → **6 syscalls/sec saved during active playback**, plus 6 per T5 track edge and 3 per extended_T2 RegNotif arrival.
+
+### Blob impact
+
+| Stage | Blob size | Free (of 4020) |
+|---|---|---|
+| Pre-Tier-1 (3344 B post-mmap-rework + reorder) | 3344 | 676 |
+| Two new subroutines, no callsites converted | 3424 | 596 |
+| All 10 callsites converted | 3228 | 792 |
+| Dropped `path_state` data string | 3172 | 848 |
+
+**Net: -172 B trampoline blob shrink** despite adding two new subroutines. The per-site savings (replacing ~30 B inline `open + read + close` with ~10 B `bl read_state_block`) exceed the subroutine cost.
+
+### State persistence semantics change
+
+The on-disk file persisted across mtkbt restarts. The `.bss` version resets to zero on every `libextavrcp_jni.so` load (process scope). After mtkbt restart, the next T5/T9 fire sees `state[N] = 0` vs current file value → edge detected → one CHANGED per active subscription emitted. Subscription gates filter out unsubscribed events. Net effect: harmless extra CHANGED-per-event-per-restart, consistent with `g_avrcp_req_event_database`'s session-scope model.
+
+The on-disk `y1-trampoline-state` file is no longer read or written by any trampoline. `TrackInfoWriter.prepareFilesLocked` still ensure-creates it (backwards-compat across staged flashes); the file bytes are now ignored. Cleanup of the `ensureFile` call deferred — 20 B of disk waste, not load-bearing.
+
+### Remaining on-disk hot paths
+
+- `y1-papp-set` — cross-process (mtkbt writes via T_papp 0x14, music app reads via FileObserver). Low frequency (only on CT-initiated Repeat / Shuffle Set). Not optimized.
+- `MediaBridgeService.readTrackInfo` (Y1Bridge) — reads `y1-track-info` via FileInputStream for IBTAvrcpMusic Binder queries. Could mmap on the same inode; deferred to Tier 2.
+
+### `path_state` literal removed
+
+The "/data/data/com.innioasis.y1/files/y1-trampoline-state" string in the trampoline data section is no longer referenced. Removed. -56 B from the blob.
+
+---
+
+## Trace #84 — 2026-05-20 Y1Bridge readTrackInfo → mmap (Tier 2)
+
+### Motivation
+
+Last remaining hot on-disk read in the AVRCP-metadata pipeline: `MediaBridgeService.readTrackInfo()` did a full `FileInputStream` open + read + close on every `IBTAvrcpMusic` Binder query (`getPlayStatus` / `position` / `duration` / `getAudioId` / `getTrackName` / `getAlbumName` / `getArtistName` / `getRepeatMode` / `getShuffleMode`). MtkBt's `BTAvrcpMusicAdapter` issues these whenever its Java mirror needs refresh — under heavy CT polling that can be tens of queries/sec.
+
+### Change
+
+`MediaBridgeService` now lazy-inits a `MappedByteBuffer` over `/data/data/com.innioasis.y1/files/y1-track-info` via `FileChannel.map(READ_ONLY, 0, 2213)` at first read. The buffer is held in a `static volatile MappedByteBuffer sTrackInfoMap` (process-global; `AvrcpBinder` is a `private static final class` so the read path must be static-reachable). Subsequent calls hit the cached buffer; `readTrackInfo()` dispatches `file[0]` to the active 1104-byte slot and bulk-copies into a return buffer via `MappedByteBuffer.duplicate().position(srcOff).get(byte[])`.
+
+Cross-process correctness: the music app's `TrackInfoWriter.flushLocked` does in-place `RandomAccessFile.seek+write` against the same inode. Kernel page cache propagates writes through the shared mapping pages; Y1Bridge's reader sees current state without re-opening the file. Same shared-inode pattern used by the trampoline chain in `libextavrcp_jni.so` on the BT-process side.
+
+Lazy-init failure semantics match the trampoline side's `get_or_init_mmap`: no sticky failure flag, every cache-miss call retries the open + map. Handles the cold-boot case where Y1Bridge starts before the music app's `prepareFilesLocked` has created the file.
+
+### Per-query savings
+
+Old:
+- 1 × `open(2)` syscall
+- ≥1 × `read(2)` syscall (loop until full 2213 B copied)
+- 1 × `close(2)` syscall
+- Per-call `byte[] raw = new byte[2213]` heap allocation + `System.arraycopy` slot extraction
+
+New:
+- 1 × `MappedByteBuffer.get(0)` (single-byte memory load — active_slot)
+- 1 × `duplicate()` (cheap; just a buffer-state copy, no data copy)
+- 1 × bulk `get(byte[], 0, 1104)` (JNI memcpy from shared page-cache pages)
+- Still allocates the return `byte[1104]` (could be cached too, but minor)
+
+Net: 3 syscalls eliminated per Binder query. Under heavy CT polling (~20-30 queries/sec observed in TV captures), that's ~60-90 syscalls/sec saved on the Y1Bridge side.
+
+### Verification path
+
+Requires `cd src/Y1Bridge && ./gradlew --stop && ./gradlew assembleDebug` before `apply.bash --bluetooth` since Java source changed. Y1Bridge.apk MD5 will shift; not pinned by patcher.
+
+### End-state on-disk inventory (AVRCP metadata path)
+
+After Tier 2 ships, the AVRCP-metadata pipeline has **zero on-disk reads in the hot path**. Remaining file I/O surface:
+
+| Path | Direction | Frequency | Treatment |
+|---|---|---|---|
+| y1-track-info | music app writes (`RandomAccessFile.seek+write`) | per state edge | kernel page cache propagates to mmap readers (BT process + Y1Bridge); reader-side has zero syscalls |
+| y1-track-info | trampolines read (`mmap2`) | per AVRCP frame | served from page cache (RAM) |
+| y1-track-info | Y1Bridge reads (`MappedByteBuffer.get`) | per Binder query | served from same page cache (RAM) |
+| y1-papp-set | mtkbt writes via T_papp 0x14 | per CT-initiated Repeat/Shuffle Set | still file-based; FileObserver CLOSE_WRITE wakes music app. Rare; not worth converting. |
+| y1-trampoline-state | (dead file, still ensure-created) | never read or written by trampolines | cosmetic cleanup deferred |
+
+The writer-side `RandomAccessFile.seek+write` is the architectural floor — you can't have cross-process page-cache propagation without the kernel write syscall path. That's the irreducible minimum.
+
+---
+
+## Trace #85 — 2026-05-20 Bolt churn root cause: mtkbt tears down AVCTP on AVDTP CLOSE
+
+### Symptom
+
+Bolt EV CT shows "metadata frozen after the first track" across multiple sessions (dual-bolt-20260519-1647, 20260520-0625, 20260520-1543). Pre-Trace #85 analysis (Traces #74, #75, #76, #77) attributed this to either AVRCP-side state issues, slow CT polling, or wire-frame fragmentation. None of those explained why the session-wide `g_avrcp_req_event_database` looked unsubscribed after the first track — the database is wiped by `clear_event_database` in `T1_extended` on every GetCapabilities, but in normal operation that fires once per CT session. Bolt was running it 3-5 times per session.
+
+### What the btlog actually shows
+
+Per-session count of `AVRCP_HandleA2DPInfo info:1` events in `dual-bolt-20260520-1543/btlog.bin`: **3**. Each is preceded by:
+
+```
+[BT] , 2, 33, 0, 7, 0, 3, 0, 42, 0, 40, 8, 4
+```
+
+Decode: HCI ACL handle 0x033 len 7, L2CAP len 3 cid 0x42 (Bolt's AVDTP signaling channel), AVDTP payload `40 08 04` = TxLabel=4 / PT=Single / MsgType=Command / **SignalID=0x08 CLOSE** / ACP_SEID=1. Bolt is closing the stream endpoint cleanly on every track skip — normal AVDTP behaviour under AVDTP V13 §8.13 (STREAMING → OPEN → IDLE).
+
+Y1's mtkbt then cascades:
+1. Tears down PSM 0x19 L2CAP channels (AVDTP signaling + stream)
+2. `[AvdtpSigMgrConnCallback]AVDTP_CONN_EVENT_DISCONNECT strm conn stat:5` fires
+3. Y1 sends DisconnectReq for PSM 0x17 channels (AVCTP signaling) — visible at `0xfa38 bl 0x1117c`
+4. `AVCTP_EVENT:3` (AVCTP disconnect)
+5. `AVRCP_HandleA2DPInfo info:1 data:0x0` log
+6. AVRCP per-handle cleanup at `fcn.0x1117c` emits more L2CAP DisconnectReqs
+
+Step 6 is the actively-harmful one: it tears down the AVCTP control channel that Bolt is still using for AVRCP commands.
+
+### RE walkthrough
+
+`AVRCP_HandleA2DPInfo` is in `bin/mtkbt`, not `libextavrcp.so`. Found by `grep "HandleA2DPInfo"` across all `.so` and binaries. Format string at file `0xc8b4f`; function entry at `fcn.0xf8e0`.
+
+Function signature (inferred from r0/r1 usage + log format):
+```
+void AVRCP_HandleA2DPInfo(int info_id, void* data_ptr);
+```
+
+`r0=info_id` dispatch in `fcn.0xf8e0`:
+- `info_id == 0`: "A2DP connected" event with new device address; compares against current AVRCP peer addr; if different → log "AVRCP: disconnect because a2dp is connected with other device" → call `fcn.0x1117c` at `0xf9b8`
+- `info_id == 1`: "A2DP lost" event; log "AVRCP: disconnect because a2dp is lost" → call `fcn.0x1117c` at `0xfa38`
+- `info_id == 2 or 3`: fall through to exit / different cleanup
+
+`fcn.0x1117c` is the AVRCP per-handle cleanup routine. Iterates a 0x1420-byte per-channel state table at offset `r0 * 0x1420` (zero for info=1 since the caller always passes r0=0), emits L2CAP DisconnectReq on the channels.
+
+Caller chain to `info_id == 1`:
+- `fcn.0xe79c` always sets `r0=1, r1=0` before `bl 0xf8e0`. Two call sites:
+  - `0xe18c` in some dispatcher; reached when state byte `[r5+0xb] != 5` && `[r5+12] != 7`
+  - `0xe204` after setting `[r5+3] = 5`; reached when `[r5+3] == 0` && `[r5+4] != 0,7`
+- `fcn.0xe748` sets `r0=1, r1=0` conditionally on its first arg being `0x100`
+  - reached from `fcn.0xe178` when `[r5+12] == 7`
+
+These dispatchers live in mtkbt's AVDTP-event handler. The state bytes look like AVDTP Stream Endpoint state (per ETSI ES 200 936): state 7 = `ABORTING`, state 5 = `STREAMING`. Y1 fires the info=1 disconnect on the AVDTP STREAMING → IDLE transition that AVDTP CLOSE triggers — which is wrong because **AVCTP signaling is independent of AVDTP audio per AVRCP V13 §4**. The two protocols are layered on L2CAP independently; a CT is free to cycle the audio stream without disturbing the AVRCP session.
+
+### The fix (M8)
+
+Replace `bl 0x1117c` at file `0xfa38` with two 16-bit NOPs:
+```
+before: 01 f0 a0 fb   bl 0x1117c
+after:  00 bf 00 bf   nop ; nop
+```
+
+After M8, the info=1 path still runs (the upper-layer cascade still happens through L2CAP), but mtkbt stops sending the additional DisconnectReq for the AVCTP control channel. The control channel stays up across the audio stream cycle. Bolt's AVRCP commands continue working without a re-handshake, so `clear_event_database` doesn't fire mid-session and the per-event TID table persists.
+
+### Why this is the right narrowing
+
+`fcn.0x1117c` has 2 call sites; only the info=1 one is being NOPed. The info=0 site (multi-device A2DP collision) still tears AVRCP down — appropriate for that case. True ACL link loss (peer powered off / out of range) is caught by the baseband link-supervision-timeout independently of this software path.
+
+### Falsifiable
+
+If Bolt still re-issues GetCapabilities after a track skip post-M8, the bug isn't in this path — likely in `AvdtpSigMgrConnCallback`'s own AVCTP teardown logic at step 3 of the cascade. Capture a fresh Bolt session after the patch; count `g_avrcp_req_event_database` reset cycles via the existing `T1tab` debug tag and the `M5dbg pd=%02x` cave.
+
+### Pixel reference status
+
+The newer Pixel↔Bolt btsnoop at `/work/logs/pixel4-bugreport-20260518-1959/FS/data/misc/bluetooth/logs/btsnoop_hci.log.last` contains zero AVDTP / AVCTP / AVRCP frames — only two SDP queries. The older capture at `/work/logs/pixel4-bugreport/FS/data/misc/bluetooth/logs/btsnoop_hci.log` is more useful: 292 AVDTP/AVCTP/AVRCP frames including one full A2DP+AVRCP session ending at relative time t=145.78 s.
+
+Pixel's session AVDTP timeline:
+- t=96.59 setup: DISCOVER → GET_ALL_CAPABILITIES → SET_CONFIGURATION → DELAYREPORT → OPEN (5 signals)
+- t=103.73, t=104.67, t=104.84: START/SUSPEND cycles (track changes / pause/resume mid-session)
+- t=144.79 SUSPEND, t=145.78 **CLOSE** — only one CLOSE in the entire 49 s of active playback, at the session end
+
+Bolt with Pixel uses **SUSPEND** for inter-track transitions; CLOSE only fires once when playback fully ends.
+
+Bolt with Y1 uses **CLOSE** on every inter-track transition (3 CLOSEs in the 1543 session, matching 3 metadata-frozen reconnect cycles). The escalation from SUSPEND→CLOSE is Y1-specific. Y1's btlog under-sampling hides any SUSPEND attempts Bolt might try first, but the pattern of CLOSE-per-track shows Bolt has given up on the SUSPEND/RESUME path for this peer.
+
+### Deeper finding: Bolt doesn't re-RegisterNotification on reconnect
+
+Y1 logcat across the 1543 session (T2reg debug tag emits once per inbound RegisterNotification):
+```
+15:43:59.962  T2reg ev=01
+15:44:00.024  T2reg ev=01   ← Bolt's initial session
+15:44:00.042  T2reg ev=02
+15:44:00.073  T2reg ev=08
+15:44:00.094  T2reg ev=09
+15:44:00.145  T2reg ev=0b
+15:44:00.147  T2reg ev=0c
+(no more T2reg events for the remaining 90 s of the session)
+```
+
+Bolt registered notifications **once** at session start. Across the 4 subsequent reconnect cycles (15:44:34, 15:45:38, 15:46:56), Bolt's CT-side state retains the prior registrations and skips re-subscription on the AVCTP wire. But Y1's `T1_extended` calls `clear_event_database` on every inbound GetCapabilities — which Bolt issues on each reconnect — wiping the per-event TID table. Post-reset, `g_avrcp_req_event_database[ev]` is 0 for every event Bolt thinks it's still subscribed to, so `event_subscribed` returns false and T5/T9 silently drop their CHANGED emits.
+
+This means **M8 is necessary but not sufficient**. Even with AVCTP preserved (M8) so Bolt's CT layer doesn't have to renegotiate AVRCP transport, the per-event database is still session-scoped via `clear_event_database`. If M8 prevents Bolt from CT-side teardown of AVCTP, Bolt may also skip the entire reconnect (no fresh GetCapabilities, no database clear) — that's the M8 win condition. If Bolt still issues a fresh GetCapabilities on its next AV/C command, the database clear still fires and M8 alone won't restore metadata.
+
+### Possible follow-up directions if M8 alone insufficient
+
+1. **Remove `clear_event_database` from `T1_extended`.** Lets the per-event TID table persist across CT sessions within a single mtkbt lifetime. Risk: stale TIDs in cross-session emits if CT genuinely re-registers — current behavior is "silent drop", new behavior would be "emit with wrong TID, CT discards" — same net UI impact, but may affect well-behaved CTs differently.
+2. **Move `clear_event_database` to an L2CAP/AVCTP teardown hook instead of GetCapabilities.** Cleaner spec semantics (subscription state is bound to AVCTP session, not GetCap PDU). Requires finding the AVCTP-side disconnect handler in libextavrcp_jni.so.
+3. **Figure out why Bolt escalates SUSPEND→CLOSE on Y1.** Possible causes: malformed AVDTP responses, unfavorable DelayReport values, codec-config differences, AVDTP version negotiation quirks. Requires a fresh Pixel+Bolt capture with explicit track-skip events to compare against Y1.
+
+(1) is cheap to try empirically. (2) is the principled fix. (3) is the upstream investigation.
+
+---
+
+## Trace #86 — 2026-05-20 Trampoline state .bss collision at 0xd2ac; relocated to 0xd2d6
+
+### Symptom
+
+After commit `e2719c7` (trampoline state → .bss at vaddr `0xd2a4`), the BT process (`iatek.bluetooth` / pid running `libextavrcp_jni.so`) enters a crash loop on every device. dmesg shows `sig 11 to [NNN:BTAvrcpMusicAda]` repeating every ~1 s; debuggerd kills all child threads each cycle; `BTAvrcpMusicAdapter construct` log line repeats in logcat at the restart cadence. CTs see "old metadata, controls don't work" because the AVRCP TG service never reaches a stable state.
+
+Captured on all three CTs in the matrix (Bolt 1859: 75 restarts, TV 1902: 24 restarts, Sonos 1936: 26 restarts), all preceding sessions (1543 / 1534 / 1336 / 1242 / 1150 etc.) had 0 restarts.
+
+### Bisection
+
+User-driven, on the flash box:
+
+| Commit | Date (UTC) | Result | Notes |
+|---|---|---|---|
+| `1c233cc` | 18:36 | **clean** (Sonos 1927, 0 restarts) | Lower bound established |
+| `925a3b6` | 19:17 | **clean** (Sonos 1947, 0 restarts) | T5 emit reorder; immediate parent of e2719c7 |
+| `e2719c7` | 20:25 | **broken** (Sonos 1936, 26 restarts) | Trampoline state → .bss |
+
+Bisection isolated the regression to exactly `e2719c7`.
+
+### Root cause
+
+`e2719c7` chose `G_Y1_TRAMPOLINE_STATE_VADDR = 0xd2a4` based on the inspection that the symbol table shows nothing between `__bss_start` / `_edata` (both at `0xd2a4`, size 0) and the first labeled stock global `g_avrcp_req_event_database` (at `0xd2b5`). That's a 17-byte gap that *looked* like alignment padding.
+
+It wasn't. Per-byte `axt` queries against radare2's `aaaa` full analysis (relocs applied) on stock `libextavrcp.so` show a single xref in the gap:
+
+```
+fcn.000036c0 0x36ca [DATA:r--] add r2, pc
+fcn.000036c0 0x36cc [DATA:r--] ldr r2, [r2]
+```
+
+Resolving by hand: at 0x36ca, `pc = 0x36ce`. Literal at 0x36d4 is `0x9bde`. `add r2, pc` → `r2 = 0xd2ac`. `ldr r2, [r2]` → `r2 = *0xd2ac` (4-byte word at byte offset 8 within our 13-byte state block). Stock `fcn.000036c0` is a thin trampoline:
+
+```
+push {r3, lr}
+ldr r2, [r0]                 ; r2 = vtable (object's first word)
+ldr.w r3, [r2, 0x190]        ; r3 = method ptr at vtable+0x190
+ldr r2, [0x36d4]             ; literal load
+add r2, pc                   ; r2 = 0xd2ac
+ldr r2, [r2]                 ; r2 = global pointer at 0xd2ac
+blx r3                       ; invoke method(arg=r2)
+pop {r3, pc}
+```
+
+So `*0xd2ac` is a stripped-symbol stock global — a pointer to some object instance, passed as the argument to a vtable method.
+
+`e2719c7`'s trampoline state writes overlapped the pointer:
+- `state[8]` (= 0xd2ac, byte 0 of corrupted pointer) — unused in current state schema, but `write_state_block` issues `strb` byte-stores when writing 13 bytes, hitting this offset
+- `state[9..11]` (= 0xd2ad..af) — T9's `last_play_status`, `last_battery_status`, `last_repeat_avrcp` bytes
+
+After even one T9 write, `*0xd2ac` becomes a small int like `0x00040201` (battery+playstatus+repeat). The next call into `fcn.000036c0` dereferences this as a pointer in the vtable method, SIGSEGVs in `BTAvrcpMusicAda`.
+
+The PositionTicker fires `playstatechanged` once per second from the music app, which fans out to MtkBt's notification handlers, which call into JNI paths that route through `fcn.000036c0` or its callers — so the corruption is hit reliably within ~1 s of any music-app activity. Hence the tight crash loop.
+
+### Verification methodology
+
+Per-byte `axt @ <addr>` queries against the full radare2 analysis identify *every* PC-relative access in `.text` that resolves to a given `.bss` address. The methodology was validated end-to-end:
+
+- Known bad spot (`0xd2ac`) → radare2 finds the `fcn.000036c0` xref ✓
+- Other bytes in 0xd2a4..0xd2b4 → no xrefs (those bytes are genuinely unreferenced)
+- Candidate gap 0xd2d6..0xd2f3 (between `g_avrcp_auto_browse_connect` and `g_avrcp_seq_id_database`, 30 bytes) → **0 xrefs across all 30 bytes**
+
+False-negative risk: stripped variables accessed via GOT-indirect or runtime-relocated addresses might escape this static check. For shared libraries on Android with PIE, data globals are typically accessed via PC-relative addressing (which radare2 catches), not absolute literals with GOT relocations (rare for non-extern data). The 0xd2ac case proves the methodology catches the relevant access pattern.
+
+### Fix
+
+Move `G_Y1_TRAMPOLINE_STATE_VADDR` from `0xd2a4` to `0xd2d6`. The new range occupies 13 bytes at `0xd2d6..0xd2e2`, well within the verified-clean 30-byte gap. Layout (state[0..12]) and all `T*_OFF_STATE + N` offsets remain unchanged — only the literal-pool constant in `_emit_read_state_block_subroutine` / `_emit_write_state_block_subroutine` rebases.
+
+Blob size impact: zero (the PC-relative offset changes value but stays 4 bytes). Patcher MD5s repinned (release `ab66739db34f97e5d2e4d6f2a6e00af8`, debug `55ba552ad3372f6fb55505c8377b896d`).
+
+### Lessons
+
+1. `__bss_start` is a hostile location for tucking in new globals. The linker collects uninitialized statics from individual compilation units at the beginning of `.bss`, so stripped/local statics cluster near `__bss_start`. Gaps *between* named globals are safer because the linker has already accounted for both endpoints.
+2. The `axt` query on radare2's full analysis is the cheapest verification for "is this `.bss` address used by stock code". Run it per-byte over any candidate range before committing.
+3. Bisection by flashing successive commits is *much* faster than static analysis when the bug is a single commit's regression. User's flash-box workflow turned this from a multi-day RE problem into a 4-flash bisection in ~45 minutes.
+
+---
+
+## Trace #87 — 2026-05-21 Bolt CT skips full AVRCP setup when BrowseGroupList is absent; P_PN1 reverted
+
+### Symptom
+
+After commit `f19ad7c` (added `0x0102 ProviderName " "` SDP attribute to AVRCP 1.3 TG record by repurposing the `0x0005 BrowseGroupList` entry slot), Bolt's AVRCP CT connects to Y1, issues a single `GetCapabilities` CMD, receives the response, then goes completely silent on AVRCP for the rest of the session. No `InformDisplayableCharacterSet`, no `RegisterNotification × 9` (the spec-default subscription burst), no `GetElementAttributes`. Bolt's HU UI shows no metadata and does not refresh on track skip. PASSTHROUGH still works because that's a CT→TG flow Bolt initiates without prior subscription.
+
+Pre-f19ad7c (e.g. `dual-bolt-20260519-2112` at commit `52a8a80..105eef5`): same Bolt issued the full handshake — GetCap → InformDisplayableCharacterSet → RegNotif × 9 → CHANGED-driven steady state with 93 inbound `T2reg` re-subscriptions visible across the session.
+
+### Decisive capture
+
+`dual-bolt-20260520-2154` was a deliberate "pair fresh, wait 100 s, don't touch anything" capture against `HEAD=5db2aee` (post-`f19ad7c`). Y1 logcat shows:
+
+```
+21:54:18  capture starts (BT process up, PID 701)
+21:54:52  Bolt connect_ind
+21:54:52  Bolt → Y1: GetCap CMD (size:9 vendor-dependent)
+21:54:52  Y1 → Bolt: GetCap RSP (IPC msg=522, AVRCP_SendMessage len=30)
+21:54:52  M5dbg / M5wire pair for the GetCap RSP outbound frame
+─────────────────────  100 s of total AVRCP silence  ─────────────────────
+21:55:19  screen off
+21:56:33  capture ends
+```
+
+`grep "T2reg"` over the session: **zero** matches. Bolt's CT didn't issue a single `RegisterNotification` and the user touched no controls. The "wait it out" hypothesis (Bolt was racing user input ahead of CT setup) is ruled out — Bolt actively chose passthrough-only mode based on what it observed about Y1.
+
+### Bisection
+
+| Commit | Date (UTC) | Capture | T2reg |
+|---|---|---|---|
+| `52a8a80..105eef5` | May 19 ~21:00 | dual-bolt-20260519-2112 | **93** (Bolt does full setup) |
+| `f19ad7c`..`5db2aee` | May 20 22:00+ | dual-bolt-20260520-2154 | **0** (Bolt silent on AVRCP) |
+
+The only mtkbt-affecting commit between the two ranges that touches SDP record shape is `f19ad7c` (P_PN0 + P_PN1). M8 (`dd8a85d`) is the other mtkbt commit in the window but it touches `AVRCP_HandleA2DPInfo`'s info=1 disconnect path — a runtime post-track-skip behavior that doesn't affect what the CT observes during AVRCP setup. The .bss state move at `e2719c7` + relocation fix at `5db2aee` are libextavrcp_jni.so changes orthogonal to SDP record contents.
+
+### Verification: Pixel ships both attributes, our patch shipped only one
+
+`f19ad7c`'s commit message claimed "Pixel parity" — Pixel's AVRCP 1.3 TG record advertises `0x0102 ProviderName " "`. The XML (`/work/logs/pixel4-sdptool-browse-avrcp-1.3.xml`) confirms:
+
+```xml
+<attribute id="0x0005">
+    <sequence>
+        <uuid value="0x1002" />            ← BrowseGroupList = PublicBrowseRoot
+    </sequence>
+</attribute>
+<attribute id="0x0102">
+    <text value=" " />                     ← ProviderName = " "
+</attribute>
+```
+
+Pixel ships **both** `0x0005` and `0x0102`. P_PN1's wire delta swapped `0x0005 BrowseGroupList → 0x0102 ProviderName` (one slot, swap not add). So our "Pixel parity" patch actually shipped a TG record with `0x0102` present *but `0x0005` absent* — the opposite of Pixel's shape for `0x0005`. Bolt's CT reads BrowseGroupList membership (`{PublicBrowseRoot}`) as a discriminator for "this peer is in the public browse group and supports full AVRCP" vs "treat as minimal/legacy"; removing it dropped Bolt onto the minimal path.
+
+### Deep RE on adding a 7th entry slot
+
+To restore `BrowseGroupList` AND ship `ProviderName`, the AVRCP 1.3 TG record's entry table needs 7 entries instead of 6. Confirmed during the deep dive:
+
+- Entry table at file `0xf978c` (vaddr `0xfa78c`, in LOAD1 / `.data`) holds exactly 6 attribute entries × 12 bytes (`attr_id(2) + len(2) + ptr(4) + zeros(4)`), tightly packed.
+- Next SDP record begins immediately at `0xf97c8`; no padding or gap.
+- Searched the entire binary for any 4-byte value equal to vaddr `0xfa78c` or file offset `0xf978c`: only the `R_ARM_RELATIVE` relocation entries in `.rel.dyn` reference these addresses. Those are bookkeeping for the dynamic loader's pointer fixups, not an SDP-specific entry index.
+- The single consumer function found by radare2 `aaaa` xrefs (`fcn.0x43a18`) scans the table with a hardcoded `cmp sl, 0x14` (20 iterations × 4-byte stride = 80 bytes = 6 entries plus 8 bytes slop) — not a per-record attribute count, just a fixed scan bound. Adjusting it would affect every other caller of the function.
+- mtkbt's binary has 230 dynamic symbols; none are named `SDP_*`, `Sdp_*`, or anything related to record iteration. Static symbols are fully stripped. The actual SDP record-builder function that iterates entries to construct on-wire responses can't be found by symbol name.
+- Sdptool against Y1 confirms the daemon serves attribute `0x0002 ServiceRecordState` and `0x0000 ServiceRecordHandle` for this record — neither is in the 6-slot entry table. So mtkbt definitely has a mechanism for adding attributes outside the table; the mechanism just isn't exposed via labeled symbols or obvious data structures.
+
+After deep search, **no safe, verified path to add a 7th entry was found**. Inserting bytes between records (shifting the next record's entries forward by 12) requires understanding all code that addresses the affected entries, which the stripped binary doesn't make tractable in reasonable time.
+
+### Fix
+
+Revert `P_PN1`. Keep `P_PN0`. The descriptor bytes for `0x0102 ProviderName " "` remain written into a previously-unused gap at file `0x0eb938`, but no entry slot references them — they're dormant. The TG record returns to its post-V7+V8 shape: `BrowseGroupList={PublicBrowseRoot}` present, `0x0102 ProviderName` absent. Bolt's CT sees the BrowseGroupList membership and takes the full-AVRCP-setup path.
+
+### Future work
+
+If a non-destructive path to adding a 7th attribute entry is found later (e.g., locating the daemon's implicit-attribute injection point that adds `0x0002 ServiceRecordState`, or finding a record-builder count-limit constant that's per-record rather than global), `P_PN0` is already in place — only a `P_PN1`-style entry write would be needed. Until then, "every spec-meaningful attribute except `0x0102 ProviderName`" is the closest Pixel parity we can ship.
+
+### Spec basis
+
+Per Bluetooth Core specification (Volume 3, Part B, §2.2), `0x0005 BrowseGroupList` is OPTIONAL but standard practice is to advertise `{PublicBrowseRoot}` (UUID `0x1002`) so that `SDP_ServiceSearchPattern` against `0x1002` returns the record. Some CT implementations use BrowseGroupList membership as a heuristic for "is this peer a fully-implemented BT profile target or a stub". Bolt EV is empirically in that group.
+
+---
+
+## Trace #88 — 2026-05-21 Debug-build SIGSEGV in `BTAvrcpMusicAda`: T5id log clobbers T5's conn struct ptr
+
+### Symptom
+
+`dual-sonos-20260521-1841`: 12 ms after Sonos drives a track change, MtkBt (PID 1065, thread `BTAvrcpMusicAda`) takes `SIGSEGV` at fault addr `0x00000019`. ActivityManager schedules a restart of every `com.mediatek.bluetooth` service; the process death wipes `g_avrcp_req_event_database` (`.bss`), so per-event subscriptions established earlier in the session are lost and Sonos's PSC/Track CHANGED subscriptions never recover. Net effect: pause-button glyph stops flipping back to play after the first track edge.
+
+Release build (`OUTPUT_MD5 = 5c8ab18…`) does not reproduce. The crash only occurs in `KOENSAYR_DEBUG=1` builds (deployed `OUTPUT_DEBUG_MD5 = c83182e9…`).
+
+### Decoding the tombstone
+
+```
+F libc    : Fatal signal 11 (SIGSEGV) at 0x00000019 (code=1), thread 1462 (BTAvrcpMusicAda)
+I DEBUG   :     r0 00000008  r1 00000009  r2 527242b5  r3 00000001
+I DEBUG   :     r4 00000000  r5 5177b9d8  r6 00000007  r7 522e6ec8
+I DEBUG   :     ... lr 52722047  pc 5272277e
+I DEBUG   :     #00  pc 0000b77e  /system/lib/libextavrcp_jni.so
+I DEBUG   :     #01  pc 0000b043  /system/lib/libextavrcp_jni.so
+```
+
+Load base `0x52717000` (from `pc - 0xb77e`). The `code around pc` dump shows the actual instruction at vaddr `0xb77e` is `7443` (Thumb-1 `strb r3, [r0, #0x11]`) — the tail of `restore_conn_tid`. With `r0=8`, the store targets `[8 + 0x11] = [0x19]` → `SEGV_MAPERR`. `lr=0x52722047` (Thumb bit set; return addr `0xb046`) lands two instructions past a `bl restore_conn_tid` inside a per-event emit dispatch arm.
+
+The disassembly of the caller arm shows it is inside `notificationTrackChangedNative`'s patched wrapper (= T5):
+
+```
+b034: 09 21          movs r1, #9            ; event_id = 0x09 NPCC
+b036: 00 f0 af fb    bl   event_subscribed
+b03a: 08 d0          beq  +8                 ; skip if database[9] == 0
+b03c: 04 f1 08 00    add.w r0, r4, #8        ; r0 = conn = r4 + 8  ← r4 is NULL
+b040: 09 21          movs r1, #9
+b042: 00 f0 97 fb    bl   restore_conn_tid   ; strb r3, [r0, #0x11] = strb [0x19]
+```
+
+### Root cause
+
+`_emit_t5` stores the `BluetoothAvrcpService` struct ptr in `r4` at its prologue (line 779: `mov_lo_lo(4, 0)` after `bl jni_get_avrcp_state`). Every CHANGED emit in T5's chain — POS_CHANGED, TRACK_CHANGED, NowPlayingContentChanged, REACHED_END, REACHED_START — does `add.w r0, r4, #8` to recompute the conn ptr before invoking the per-event response builder.
+
+At T5's TRACK_CHANGED emit site (line 885), the debug-only `T5id` log captures `selected_track_id[7]` (always 0; the SELECTED-track AVRCP 1.3 §6.7.2 sentinel) for diagnostics:
+
+```python
+if DEBUG_NATIVE_LOG:
+    a.ldrb_w(4, 3, 7)                     # r4 = id[7]
+    _emit_native_log_u32(a, "log_fmt_t5id", 4)
+```
+
+`_emit_native_log_u32` push/pops `{r0, r1, r2, r3}` around the `__android_log_print` blx (the comment block at `_trampolines.py:2228` is explicit: *"caller has its full r0..r3 arg vector already loaded ... so push/pop all four caller-arg registers around the call to preserve the emit's setup"*). It does **not** save r4 — r4 is the *value-passing* register, and the helper's contract was written assuming the caller could spare it.
+
+In T5 the caller cannot spare r4. The `ldrb_w(4, 3, 7)` overwrites the conn struct ptr with `selected_track_id[7] = 0`. The TRACK_CHANGED `blx_imm(PLT_track_changed_rsp)` immediately following uses r0-r3 (which are correct) and tail-returns. The next event in the chain — NPCC at `0xb03c` — recomputes `r0 = r4 + 8`. With r4 now `0`, `r0 = 8`. `restore_conn_tid`'s final `strb r3, [r0, #0x11]` writes `[0x19]` → fault.
+
+### Why only debug, why only NPCC
+
+- **Debug only**: `DEBUG_NATIVE_LOG` is `False` in release builds — the `ldrb_w(4, 3, 7)` isn't emitted. r4 stays intact through the whole emit chain.
+- **NPCC first**: T5's chain is PPC → TC → NPCC → REACHED_END → REACHED_START. The clobber happens at TC's debug log (after r4-based setup). PPC fires before the clobber. TC fires immediately after the clobber but doesn't read r4 between the log and the blx (r0-r3 are already loaded). NPCC is the first downstream emit whose `event_subscribed` gate passes — that's the one that crashes. (POS_CHANGED at the chain's *head* fires before the clobber and was fine; the crash is specifically when database[9] != 0, i.e., the CT subscribed to NPCC. Sonos does.)
+
+### Identical pattern is harmless at two other sites
+
+`_emit_t4` (line 477) and `_emit_extended_t2` (line 742) have the same `ldrb_w(4, 3, 7); _emit_native_log_u32(..., 4)` pattern, but both functions store the conn struct ptr in r5 (not r4). The r4 clobber at those sites lands on a scratch register that nothing reads. Latent code smell, not a live bug.
+
+### Fix
+
+Wrap T5's debug log with `push {r4} / pop {r4}` so the conn struct ptr survives the value-passing clobber:
+
+```python
+if DEBUG_NATIVE_LOG:
+    a.raw(bytes([0x10, 0xB4]))            # push {r4}
+    a.ldrb_w(4, 3, 7)
+    _emit_native_log_u32(a, "log_fmt_t5id", 4)
+    a.raw(bytes([0x10, 0xBC]))            # pop  {r4}
+```
+
+Cost: +4 B (debug build only). Debug blob 3392 → 3396 B, headroom 628 → 624 B against the 4020 B cave. Release blob unchanged (3152 B).
+
+T4 and extended_T2 left untouched — the clobber is harmless there and a defensive push/pop would only add bytes without changing behaviour.
+
+### MD5 pin update
+
+- `OUTPUT_MD5`: `5c8ab181c221d3c31739fe5955f7a25b` (unchanged — release-side bytes are identical)
+- `OUTPUT_DEBUG_MD5`: `c83182e95edcaa0951ae1ca38fa0a350` → `778991030950699c2e2861bc7e457556`
+
+---
+
+## Trace #89 — 2026-05-21 Delete T5id debug log (dead code; resolves #88 bug class)
+
+### Motivation
+
+Trace #88 fixed the T5 `r4`-clobber crash by wrapping the `T5id` debug log in `push {r4} / pop {r4}`. That fix preserved a log that, on review, has no actual diagnostic value:
+
+- **Value is constant.** `T5id=%02x` always logs `00` — `selected_track_id` is a static `.rodata` buffer of eight zero bytes (AVRCP 1.3 §6.7.2 SELECTED sentinel). The byte cannot become non-zero at runtime (no mprotect writer).
+- **Source site is indistinguishable.** The same `log_fmt_t5id` format string is used at all three call sites (T4 reactive CHANGED, extended_T2 INTERIM, T5 proactive CHANGED). Logcat shows `T5id=00` but doesn't say which path fired.
+- **Never cited as load-bearing.** Across 88 prior INVESTIGATION traces, `T5id` is referenced exactly once — by Trace #88, which documents it causing a crash. No trace ever used it as a positive diagnostic signal. Other Y1T tags (`T2reg`, `T9ps`, `T9papp`, `T9pos`) already confirm CHANGED emits with site-distinguishing names.
+
+The log was probably added during the Identifier-value design churn (commits `9c4ae0e` monotonic-counter → `53e6153` SELECTED 0x00*8) as a sanity check that the wire payload settled at the spec-correct zero value. Once the design stabilised, the log became dead weight.
+
+### Action
+
+Deleted all three `if DEBUG_NATIVE_LOG: ldrb_w(4, 3, 7); _emit_native_log_u32(a, "log_fmt_t5id", 4)` blocks plus the `log_fmt_t5id` label and asciiz. Also removed the row from `docs/PATCHES.md` and the mention from `src/patches/README.md`'s Y1T tag inventory. T1pdu / T2reg cross-references updated to drop the `T5id` pointer.
+
+### Net effect vs. b1c113d (Trace #88's fix)
+
+- T5 `r4` clobber cannot recur: the source-code pattern that produced it no longer exists at any site.
+- The `push {r4} / pop {r4}` scaffolding from b1c113d is gone — there's nothing to guard against.
+- Debug blob: 3396 B → 3308 B (88 B saved: 3 × ~26 B per call site + ~10 B for the dropped format string).
+- Release blob: 3152 B (unchanged — `DEBUG_NATIVE_LOG` was already gating release-side emission).
+
+### MD5 pin update
+
+- `OUTPUT_MD5`: `5c8ab181c221d3c31739fe5955f7a25b` (unchanged)
+- `OUTPUT_DEBUG_MD5`: `778991030950699c2e2861bc7e457556` → `c81d15339c73ec4db6703eb03c25cc59`
+
+---
+
+## Trace #90 — 2026-05-22 Non-RegNotif AVCTP TID echo broken; fixed at T4 entry
+
+### Symptom
+
+`dual-bolt-20260521-2111`: Bolt connects, exchanges A2DP, issues PASSTHROUGH PLAY (works), then issues a single `GetElementAttributes` and goes completely silent on AVRCP for the remaining 160 s. Metadata pane never populates. PASSTHROUGH control continues to work because that's a different AV/C subprotocol with its own TID echo path.
+
+`dual-kia-20260521-2109`: Kia metadata works (polling-driven), but the playhead lingers ~1 s after track changes. Kia issues 37 GetPlayStatus polls + 17 GetEA fetches in 79 s, never a single RegisterNotification.
+
+### M5 wire-tag census (debug-build c81d15339c…)
+
+Outbound `chan+0x39` (the byte mtkbt encodes as AVCTP transaction-label upper nibble) per CT, across the four-CT matrix:
+
+| CT | Outbound c39 distribution | Inbound TID pattern |
+|---|---|---|
+| Sonos | 47× `00`, 24× `01`, 14× `04`, 11× mixed | Varies (RegNotif-driven refresh) |
+| TV (Samsung Frame Pro) | similar mixed | Varies (poll + subscribe) |
+| Kia EV6 | **57× `07` (every outbound)** | 12 inbound: 2× TID=03, 10× TID=07 |
+| Bolt EV | **2× `07` (both outbound)** | 12 inbound: TIDs 0x01..0x0b cycling |
+
+Kia works by accident — its CT-side TID generator happens to use 0x07 for most CMDs, so the stale-07 echo matches what Kia expects. The 2 TID=03 CMDs got TID=07 responses (rejected; no visible impact since Kia polls regardless).
+
+Bolt cycles TIDs starting at 0x01. The GetEA CMD (TID=0x01) got an RSP with TID=0x07. Bolt rejected per AVCTP §3.3.5 strict-echo and stopped issuing CMDs that required a response.
+
+### Root cause: stale conn[+0x11] on non-RegNotif PDUs
+
+Stock libextavrcp_jni.so writes `conn[+0x11] = inbound seq_id` right before every response-builder call. The rsp builders pack `conn[+0x11]` into the AVCTP TL field on outbound frames, fulfilling §3.3.5 strict echo.
+
+The R1 redirect at JNI vaddr `0x6538` (commit history) hijacks the dispatcher path **upstream** of stock's `conn[+0x11]` write. For RegNotif PDUs, our trampoline re-establishes the write via `extended_T2` → `save_event_seq_id` → `_emit_restore_conn_tid_from_db`, which uses the per-event database at `g_avrcp_req_event_database[event_id]`. That path works.
+
+For non-RegNotif PDUs (GetEA, GetPlayStatus, InformCharset, InformBattery, PApp 0x11..0x16, Continuation 0x40/0x41), none of our T4-family handlers wrote `conn[+0x11]`. The slot kept whatever value the *first* response after connect left there — which for both Bolt and Kia was 0x07 from the initial GetCapabilities RSP.
+
+CTs that RegNotify frequently (Sonos, TV) avoided the symptom because every RegNotif INTERIM/CHANGED emit refreshes `conn[+0x11]` through the database path. Their non-RegNotif responses inherit a "recent" value that, while not strictly correct per the inbound CMD's TID, was close enough or by coincidence matched.
+
+### Pixel-as-TG verification
+
+`/work/logs/pixel4-bugreport/FS/data/misc/bluetooth/logs/btsnoop_hci.log` — Pixel 4 acting as AVRCP TG to Kia (CT). Frames 1480..1900, AVCTP transaction column:
+
+| Frame | Dir | TID | PDU | Note |
+|---|---|---|---|---|
+| 1480 / 1481 | CT→TG / TG→CT | 0x00 | GetCap | RSP echoes 0x00 |
+| 1492 / 1493 | / | 0x01 | InformCharset | RSP echoes 0x01 |
+| 1498 / 1501 | / | 0x02 | RegNotif(PSC) INTERIM | RSP echoes 0x02 |
+| 1505 / 1506 | / | 0x03 | RegNotif(TC) INTERIM | RSP echoes 0x03 |
+| 1508 / 1509 | / | 0x04 | GetEA | RSP echoes 0x04 |
+| 1517 / 1518 | / | 0x07 | GetEA | RSP echoes 0x07 |
+| 1529 / 1530 | / | 0x0b | PApp 0x11 | RSP echoes 0x0b |
+
+Pixel echoes the inbound TID on **every** PDU type. Per-event CHANGED emits (frames 1584/1601/1602/1646…) use the most recent RegNotif CMD's TID for that event, which matches our database-driven mechanism for CHANGED.
+
+### Fix
+
+Add 6 bytes at `_emit_t4` entry (the universal dispatcher reached for every non-RegNotif PDU through `extended_T2` → `b.w T4`):
+
+```python
+a.ldrb_w(1, 13, 0x171)                    # r1 = inbound seq_id at sp+0x171
+hw = 0x7000 | (0x19 << 6) | (5 << 3) | 1  # strb r1, [r5, #0x19]
+a.raw(bytes([hw & 0xFF, (hw >> 8) & 0xFF]))
+```
+
+`sp+0x171` is the empirically-verified pre-`SUB SP` offset of the inbound `seq_id` byte at the testparmnum-derived entry context (same offset `extended_T2` reads for `save_event_seq_id`'s argument). `r5+0x19` is `conn[+0x11]` (with `conn = r5 + 8`). r1 is clobbered; every downstream T4 / T6 / T_charset / T_battery / T_papp / T_continuation rsp-builder prologue re-loads r1 before the blx.
+
+GetCap path at `T1_extended:0xac5c` is unaffected — Sonos/Bolt GetCap RSPs already echo correctly via stock JNI's pre-R1 path. RegNotif paths in `extended_T2` / T5 / T8 / T9 also unaffected — they continue using `restore_conn_tid` from the per-event database.
+
+### Predicted empirical outcomes for verification
+
+- **Bolt**: GetEA RSPs ship with TID matching CMD → Bolt accepts → metadata pane populates. Subscription cycle may resume (if BrowseGroupList was the only remaining blocker per Trace #87).
+- **Kia**: TID=03 CMDs now get TID=03 RSPs (was rejected, now accepted). Most behavior unchanged since TID=07 already worked. Playhead lag is structural (polling cadence ~2 Hz) and independent of TID echo.
+- **Sonos / TV**: No behavior change. Their non-RegNotif RSPs now ship the precise inbound CMD TID (was: most-recent-RegNotif TID via database); strictly more correct per §3.3.5.
+
+### Budget
+
+- Release blob: 3152 → 3156 B (+4 B; release-side bytes were already correct so why +4? — align padding shifted).
+- Debug blob: 3308 → 3312 B (+4 B).
+- 708 B headroom in debug, 864 B in release. Plenty.
+
+### MD5 pin update
+
+- `OUTPUT_MD5`: `5c8ab181c221d3c31739fe5955f7a25b` → `4ebd181976c1dbdd19b6a06112dce484`
+- `OUTPUT_DEBUG_MD5`: `c81d15339c73ec4db6703eb03c25cc59` → `384f0c630feff36d43e62a122764bade`

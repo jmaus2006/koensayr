@@ -3,11 +3,19 @@
 .source "TrackInfoWriter.smali"
 
 
-# Singleton holder + atomic writer for /data/data/com.innioasis.y1/files/y1-track-info.
+# Singleton holder + double-buffer writer for /data/data/com.innioasis.y1/files/y1-track-info.
 #
-# 1104-byte schema, byte offsets 0..1103. Read by the libextavrcp_jni.so trampolines
-# (T1/T2/extended_T2/T4/T5/T6/T8/T9/T_papp/T_charset/T_battery) directly via
-# open(2)+read(2).
+# Schema (2213 bytes): file[0]=active_slot, file[1..3]=RFA, file[4..1107]=slot[0],
+# file[1108..2211]=slot[1], file[2212]=RFA. Each slot holds the 1104-byte track-info
+# image (audio_id / title / artist / album / position / status / battery / papp /
+# etc.) at the same per-field offsets that pre-mmap code used at file[0..1103].
+#
+# flushLocked picks inactive = 1 - active_slot, writes the 1104-byte image into the
+# inactive slot via RandomAccessFile.seek+write, then atomically updates file[0]
+# to point at the just-written slot. Single-byte writes to offset 0 are atomic on
+# ARMv7 (aligned strb), so libextavrcp_jni.so's reader (mmap'd) never sees a torn
+# slot — at any instant slot[file[0]] is the consistent snapshot from the last
+# completed flush.
 #
 # All public mutators are synchronized on INSTANCE. flushLocked() is called inline
 # from the calling thread (Static.setPlayValue runs on main; callbacks are off-main
@@ -74,6 +82,20 @@
 # playerPrepared restore. User-initiated seeks (seek-bar drag) come well
 # after, so they're not affected.
 .field private mLastFreshTrackChangeAt:J
+
+# Rate-limit gate state for wakePlayStateChanged. AVRCP 1.3 §5.4.2 Tbl 5.33
+# leaves PLAYBACK_POS_CHANGED cadence to the TG; nominal 1Hz is the floor
+# for any spec-conforming CT. Cascading callbacks during a single track-edge
+# (onPlayValue + onPrepared + onPlayerPreparedTail + PositionTicker) used
+# to fire 3+ wakes in <200ms, producing back-to-back position CHANGED
+# emits that saturate strict §6.7.1 CTs' AVCTP buffer (observed on Bolt
+# 2112 — 21 of 75 ev=05 RegNotifs arrived within <500ms of the previous
+# one). wakePlayStateChanged now coalesces same-play_status wakes within
+# 800ms of the previous broadcast — real play-state edges (mPlayStatus
+# changed) always bypass.
+.field private mLastWakePlayStateAt:J
+
+.field private mLastWakePlayStatus:B
 
 # MediaMetadataRetriever-derived duration cache. Y1 music app stores no
 # DB-cached duration; PlayerService.getDuration() delegates to
@@ -221,8 +243,9 @@
 
 
 # Make filesDir traversable for the BT process (uid bluetooth) and pre-create
-# the state files (y1-trampoline-state, y1-papp-set) world-rw — trampolines
-# open them without O_CREAT, so they must exist before MtkBt's first probe.
+# the music-app-owned data files world-rw. y1-track-info gets pre-sized to
+# 2213 B so the trampolines' first mmap covers a valid file. y1-papp-set is
+# pre-created so T_papp 0x14 can open without O_CREAT on CT-initiated PApp Set.
 .method private prepareFilesLocked()V
     .locals 4
 
@@ -240,15 +263,22 @@
 
     invoke-virtual {v0, v1, v2}, Ljava/io/File;->setExecutable(ZZ)Z
 
-    const-string v1, "y1-trampoline-state"
-
-    const/16 v2, 0x14
-
-    invoke-direct {p0, v1, v2}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->ensureFile(Ljava/lang/String;I)V
-
     const-string v1, "y1-papp-set"
 
     const/4 v2, 0x2
+
+    invoke-direct {p0, v1, v2}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->ensureFile(Ljava/lang/String;I)V
+
+    # Pre-size y1-track-info to the double-buffer schema (2213 bytes:
+    # active_slot byte + 3 RFA + slot[0] 1104 B + slot[1] 1104 B + 1 RFA).
+    # The libextavrcp_jni.so trampolines mmap this file lazily on first
+    # read; mmap requires the file to be at least the mapping size before
+    # the first map call. ensureFile zeros the file content, so initial
+    # active_slot = 0 and both slots are empty until flushLocked overwrites
+    # slot[0]'s area on its first call.
+    const-string v1, "y1-track-info"
+
+    const/16 v2, 0x8a5
 
     invoke-direct {p0, v1, v2}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->ensureFile(Ljava/lang/String;I)V
     :try_end_0
@@ -351,6 +381,50 @@
 
     if-ne v0, p1, :cond_changed
 
+    # Same-state setPlayStatus call. Normally a no-op, but if newStatus is
+    # PLAYING (1) we re-anchor from MediaPlayer.getCurrentPosition() before
+    # returning. Y1's music app fires setPlayValue(1) at multiple points
+    # (track-load init, audio-focus regain, restartPlay's auto-resume)
+    # often BEFORE MediaPlayer actually begins emitting audio. The first
+    # such call sets mPlayStatus=1 + stamps mStateChangeTime at that
+    # pre-play moment; subsequent setPlayStatus(1) calls early-return
+    # without re-stamping, so the trampoline's live_pos = anchor +
+    # (now - stale_time) accumulates phantom seconds until actual
+    # playback start. Bolt's playhead then renders ahead-of-reality (Bolt
+    # 1326 capture: Y1 UI 0:30 vs IPC-shipped 3:18 = 2:48 phantom drift).
+    # Ground-truthing here keeps IPC in sync with MediaPlayer regardless
+    # of which redundant setPlayStatus(1) the actual play-start lands on.
+    const/4 v1, 0x1
+
+    if-ne p1, v1, :early_return
+
+    invoke-static {}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->getPlayerService()Lcom/innioasis/y1/service/PlayerService;
+
+    move-result-object v1
+
+    if-eqz v1, :early_return
+
+    invoke-virtual {v1}, Lcom/innioasis/y1/service/PlayerService;->getPlayerIsPrepared()Z
+
+    move-result v2
+
+    if-eqz v2, :early_return
+
+    invoke-virtual {v1}, Lcom/innioasis/y1/service/PlayerService;->getCurrentPosition()J
+
+    move-result-wide v2
+
+    iput-wide v2, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mPositionAtStateChange:J
+
+    invoke-static {}, Landroid/os/SystemClock;->elapsedRealtime()J
+
+    move-result-wide v2
+
+    iput-wide v2, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mStateChangeTime:J
+
+    invoke-direct {p0}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->flushLocked()V
+
+    :early_return
     monitor-exit p0
 
     return-void
@@ -577,7 +651,7 @@
 # mLastKnownDuration reset is critical: flushLocked falls back to the cached
 # duration when getPlayerIsPrepared() is false (the prepareAsync gap). Without
 # the reset, the file briefly reports the previous track's duration. 0 reads
-# as "unknown" per AVRCP §5.3.4 / 1.3 attr 0x07; the B5.2c playerPrepared-tail
+# as "unknown" per AVRCP 1.3 Appendix E attr 0x07 (PlayingTime); the B5.2c playerPrepared-tail
 # hook re-flushes once getPlayerIsPrepared() flips true.
 .method public declared-synchronized onFreshTrackChange()V
     .locals 3
@@ -658,6 +732,22 @@
     # see the new track even if we end up taking the same-track path below.
     invoke-direct {p0}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->flushLocked()V
 
+    # Two independent reset triggers:
+    #   1. audio_id changed (real track edge)
+    #   2. previous track ended naturally (mPreviousTrackNaturalEnd, latched
+    #      from mPendingNaturalEnd above) — covers the EOS-replay-same-track
+    #      case where the player is re-preparing the SAME track that just
+    #      naturally completed. markCompletion left
+    #      mPositionAtStateChange = mLastKnownDuration (freeze at end);
+    #      without a reset here T9's live-extrapolation emits
+    #      live_pos = duration + (now - completion_time) on every PPC tick,
+    #      which CTs render as "playhead at end of track, frozen there"
+    #      even though audio is playing the freshly re-prepared track from 0.
+    #      Detail in docs/INVESTIGATION.md.
+    iget-boolean v4, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mPreviousTrackNaturalEnd:Z
+
+    if-nez v4, :cond_force_reset
+
     # Compare new audio_id (just written) with snapshot.
     iget-wide v2, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mCachedAudioId:J
 
@@ -665,7 +755,8 @@
 
     if-eqz v4, :cond_same_track
 
-    # Real track edge — reset position anchor and re-flush.
+    :cond_force_reset
+    # Reset position anchor and re-flush.
     const-wide/16 v0, 0x0
 
     iput-wide v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mPositionAtStateChange:J
@@ -892,7 +983,9 @@
 
 
 # The actual file writer. Caller must hold monitor.
-# 1104-byte buffer; atomic tmp+rename; world-readable on creation.
+# Fills a 1104-byte buffer with the current track image, then writes it to the
+# inactive slot of the 2213-byte double-buffer file via RandomAccessFile +
+# atomic single-byte active_slot flip. World-readable so mtkbt can mmap.
 .method private flushLocked()V
     .locals 14
 
@@ -1224,50 +1317,91 @@
 
     invoke-static {v1, v0, v2, v7}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->putUtf8Padded([BIILjava/lang/String;)V
 
-    # Atomic write to filesDir/y1-track-info.tmp -> rename to y1-track-info
+    # RandomAccessFile-based double-buffer in-place write to y1-track-info.
+    # Schema: file[0]=active_slot, file[1..3]=RFA, file[4..1107]=slot[0],
+    # file[1108..2211]=slot[1], file[2212]=RFA. Reader (libextavrcp_jni.so
+    # trampolines via the read_track_info subroutine) reads file[0] once,
+    # dispatches to slot[active], mmaps the same inode across the writer's
+    # in-place updates — no tmpfile + rename which would orphan the
+    # reader's mapped page.
     new-instance v0, Ljava/io/File;
 
     iget-object v2, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mFilesDir:Ljava/io/File;
 
-    const-string v3, "y1-track-info.tmp"
+    const-string v3, "y1-track-info"
 
     invoke-direct {v0, v2, v3}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
 
-    new-instance v2, Ljava/io/File;
+    new-instance v3, Ljava/io/RandomAccessFile;
 
-    iget-object v3, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mFilesDir:Ljava/io/File;
+    const-string v2, "rw"
 
-    const-string v4, "y1-track-info"
-
-    invoke-direct {v2, v3, v4}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
-
-    new-instance v3, Ljava/io/FileOutputStream;
-
-    invoke-direct {v3, v0}, Ljava/io/FileOutputStream;-><init>(Ljava/io/File;)V
+    invoke-direct {v3, v0, v2}, Ljava/io/RandomAccessFile;-><init>(Ljava/io/File;Ljava/lang/String;)V
 
     :try_start_inner
-    invoke-virtual {v3, v1}, Ljava/io/FileOutputStream;->write([B)V
+    # setLength(2213) — extends an upgrade-from-old-schema file (1104 B)
+    # to the new size and zeros the new tail bytes. No-op on a properly
+    # sized file (RandomAccessFile.setLength on size==N is documented
+    # idempotent on Android).
+    const/16 v2, 0x8a5
+
+    int-to-long v4, v2
+
+    invoke-virtual {v3, v4, v5}, Ljava/io/RandomAccessFile;->setLength(J)V
+
+    # Read active_slot byte at offset 0.
+    const-wide/16 v4, 0x0
+
+    invoke-virtual {v3, v4, v5}, Ljava/io/RandomAccessFile;->seek(J)V
+
+    invoke-virtual {v3}, Ljava/io/RandomAccessFile;->read()I
+
+    move-result v2
+
+    # inactive_slot = 1 - (active_slot & 1). Mask first so an EOF return
+    # (-1) is treated as 0 for the flip computation — yields inactive=1
+    # which writes to slot[1] and flips active to 1 on the first post-
+    # upgrade flush, leaving slot[0] still holding stale-or-zero data
+    # until the next flush. Subsequent flushes alternate cleanly.
+    and-int/lit8 v2, v2, 0x1
+
+    rsub-int/lit8 v6, v2, 0x1
+
+    # inactive_byte_offset = 4 + inactive_slot * 1104.
+    const/16 v7, 0x450
+
+    mul-int/2addr v7, v6
+
+    add-int/lit8 v7, v7, 0x4
+
+    int-to-long v4, v7
+
+    # Seek to inactive slot, write the 1104-byte buffer.
+    invoke-virtual {v3, v4, v5}, Ljava/io/RandomAccessFile;->seek(J)V
+
+    invoke-virtual {v3, v1}, Ljava/io/RandomAccessFile;->write([B)V
+
+    # Atomic flip: seek to 0, write the new active_slot byte (= inactive).
+    # RandomAccessFile.write(int) writes only the low 8 bits — single-byte
+    # store, atomic on ARMv7 / cacheline-aligned offset 0.
+    const-wide/16 v4, 0x0
+
+    invoke-virtual {v3, v4, v5}, Ljava/io/RandomAccessFile;->seek(J)V
+
+    invoke-virtual {v3, v6}, Ljava/io/RandomAccessFile;->write(I)V
     :try_end_inner
     .catchall {:try_start_inner .. :try_end_inner} :catchall_inner
 
-    invoke-virtual {v3}, Ljava/io/FileOutputStream;->close()V
+    invoke-virtual {v3}, Ljava/io/RandomAccessFile;->close()V
 
-    invoke-virtual {v0, v2}, Ljava/io/File;->renameTo(Ljava/io/File;)Z
+    # Ensure world-readable so mtkbt (separate uid bluetooth) can mmap.
+    # Idempotent; covers the case where ensureFile or some external
+    # cleanup re-chmod'd the file.
+    const/4 v2, 0x1
 
-    move-result v3
+    const/4 v4, 0x0
 
-    if-nez v3, :cond_renamed
-
-    invoke-virtual {v0}, Ljava/io/File;->delete()Z
-
-    return-void
-
-    :cond_renamed
-    const/4 v0, 0x1
-
-    const/4 v3, 0x0
-
-    invoke-virtual {v2, v0, v3}, Ljava/io/File;->setReadable(ZZ)Z
+    invoke-virtual {v0, v2, v4}, Ljava/io/File;->setReadable(ZZ)Z
     :try_end_top
     .catch Ljava/lang/Throwable; {:try_start_top .. :try_end_top} :catch_top
 
@@ -1276,7 +1410,7 @@
     :catchall_inner
     move-exception v4
 
-    invoke-virtual {v3}, Ljava/io/FileOutputStream;->close()V
+    invoke-virtual {v3}, Ljava/io/RandomAccessFile;->close()V
 
     throw v4
 
@@ -1707,9 +1841,46 @@
 # Call sites: PlaybackStateBridge.onPlayValue (state-edge wake), and
 # PlaybackStateBridge.onPrepared (new-track wake — position resets to 0).
 .method public wakePlayStateChanged()V
-    .locals 5
+    .locals 7
 
     :try_start_0
+    # Rate-limit gate. Suppress broadcast when mPlayStatus is unchanged AND
+    # the previous broadcast fired <800ms ago. AVRCP 1.3 §5.4.2 Tbl 5.33
+    # nominal 1Hz position cadence is the floor; real play-state edges
+    # (mPlayStatus differs from mLastWakePlayStatus) always bypass the
+    # gate. File state (y1-track-info) was already flushed by the caller's
+    # setPlayStatus / flush / onTrackEdge / markCompletion path, so T6
+    # GetPlayStatus polling remains current even when the broadcast
+    # itself is suppressed.
+    invoke-static {}, Landroid/os/SystemClock;->elapsedRealtime()J
+
+    move-result-wide v5
+
+    iget-wide v2, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mLastWakePlayStateAt:J
+
+    sub-long v0, v5, v2
+
+    const-wide/16 v2, 0x320
+
+    cmp-long v4, v0, v2
+
+    if-gez v4, :rate_limit_proceed
+
+    iget-byte v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mPlayStatus:B
+
+    iget-byte v1, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mLastWakePlayStatus:B
+
+    if-ne v0, v1, :rate_limit_proceed
+
+    return-void
+
+    :rate_limit_proceed
+    iput-wide v5, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mLastWakePlayStateAt:J
+
+    iget-byte v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mPlayStatus:B
+
+    iput-byte v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mLastWakePlayStatus:B
+
     iget-object v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mContext:Landroid/content/Context;
 
     if-eqz v0, :cond_no_ctx
@@ -1779,6 +1950,94 @@
     move-result-object v2
 
     invoke-static {v1, v2}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+
+    return-void
+.end method
+
+
+# Force-emit a PlaybackStatusChanged edge pair (PAUSED → PLAYING) on the
+# AVRCP wire. Called at track-edge settle from PlaybackStateBridge.
+# onPlayerPreparedTail. The actual two-phase work is delegated to
+# PscPulse.fire() which handles the 50 ms inter-phase delay needed for
+# mtkbt's broadcast dispatch + JNI invocation to durably consume phase
+# 1's file write before phase 2 overwrites it. This method just owns the
+# "only pulse while PLAYING" gate.
+#
+# Empirically (Bolt 2221 capture, 2026-05-19), at least one head-unit CT
+# gates its metadata-pane refresh on PlaybackStatus CHANGED edges, NOT on
+# TrackChanged CHANGED. Natural track ends keep mPlayStatus at PLAYING
+# throughout, so T9 sees no PSC edge and never fires a CHANGED — the CT
+# sits on stale metadata until its polling cycle (~40 s) catches up or
+# the user presses a hardware key (which generates a PSC edge via the
+# music app's setPlayValue cascade). Pixel-as-TG (observed in
+# btsnoop_hci 2026-05-18) emits PSC=Paused CHANGED mid-transition then
+# PSC=Playing INTERIM via the CT's re-register burst, giving the same
+# CT two PSC edges per track edge. See PscPulse.fire() docstring + Trace
+# #75 / #76 in docs/INVESTIGATION.md.
+#
+# Only fires when currently PLAYING — track edges that land while paused
+# or stopped get their PSC refresh from the actual play-state edge that
+# follows.
+.method public declared-synchronized pulsePlayStatusForCT()V
+    .locals 2
+
+    monitor-enter p0
+
+    :try_start_0
+    iget-byte v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mPlayStatus:B
+
+    const/4 v1, 0x1
+
+    if-ne v0, v1, :pulse_skip
+
+    invoke-static {}, Lcom/koensayr/y1/playback/PscPulse;->fire()V
+
+    :pulse_skip
+    monitor-exit p0
+
+    return-void
+    :try_end_0
+    .catchall {:try_start_0 .. :try_end_0} :catchall_0
+
+    :catchall_0
+    move-exception v0
+
+    monitor-exit p0
+
+    throw v0
+.end method
+
+
+# Reset wake rate-limit so the NEXT wakePlayStateChanged() call always
+# fires its broadcast, regardless of how recently the previous wake
+# fired or whether mPlayStatus changed.
+#
+# The rate-limit gate inside wakePlayStateChanged was designed to
+# coalesce the 3-wake cascade around track edges (onPlayValue +
+# onPrepared + onPlayerPreparedTail in tight succession, <200 ms apart,
+# same mPlayStatus). PositionTicker's 1 Hz heartbeat shouldn't be
+# subject to that gate — but if the previous wake landed <800 ms ago
+# with the same mPlayStatus (e.g., PSC pulse phase 2 settled to PLAYING,
+# then PositionTicker tick lands 600 ms later), the gate suppresses
+# the broadcast and T9 never runs → no PLAYBACK_POS_CHANGED on the
+# wire → CT's playhead freezes after the initial track-change tick.
+#
+# Empirical: Kia 0707 (2026-05-20) had 86 PositionTicker.run firings
+# but only 47 Kia ev=05 RegNotif acks (strict §6.7.1 = one re-register
+# per PPC CHANGED received). ~39 ticks were dropped by the rate-limit.
+# User reported "track length updates but track position does not
+# after the initial tick" — the exact symptom predicted by the gate
+# eating PositionTicker.
+#
+# PositionTicker.run calls this method before each wakePlayStateChanged,
+# which makes the gate's `now - mLastWakePlayStateAt` calculation see
+# a huge delta (current uptime minus 0) → bypass → broadcast fires.
+.method public resetWakeRateLimit()V
+    .locals 2
+
+    const-wide/16 v0, 0x0
+
+    iput-wide v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mLastWakePlayStateAt:J
 
     return-void
 .end method

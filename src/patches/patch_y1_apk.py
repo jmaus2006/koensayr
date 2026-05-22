@@ -5,12 +5,22 @@ patch_y1_apk.py — smali patches on the Y1 music player APK.
 Patches (per docs/PATCHES.md ## patch_y1_apk.py):
   A/B/C  Artist→Album navigation (tapping an artist drills into that
          artist's albums instead of a flat song list).
-  B5/B6  In-music-app TrackInfoWriter + PlaybackStateBridge +
-         BatteryReceiver + PappSetFileObserver injection (companions to
-         the libextavrcp_jni.so trampoline chain).
-  E      Discrete PASSTHROUGH routing in PlayControllerReceiver
+  B3     PappSetReceiver — receives CT-driven AVRCP Repeat/Shuffle Set
+         and applies it to the music app's preferences.
+  B4     PappStateBroadcaster — Y1-side Repeat/Shuffle SharedPreferences
+         edges → AVRCP wire CHANGED via the trampoline chain.
+  B5     In-music-app `TrackInfoWriter` + `PlaybackStateBridge` +
+         `PositionTicker` + `BatteryReceiver` + `PappSetFileObserver` +
+         `PscPulse` + `NowPlayingRefresher` injection (canonical writer
+         of y1-track-info; companions to the libextavrcp_jni.so
+         trampoline chain).
+  B6     `AvrcpBridgeService` + `AvrcpBinder` smali drop into
+         smali_classes2/ (unused groundwork for a future architecture
+         where MtkBt's bindService routes directly into the music-app
+         process; currently MtkBt resolves to Y1Bridge.apk instead).
+  E      Discrete PASSTHROUGH routing in `PlayControllerReceiver`
          (PLAY / PAUSE / STOP / NEXT / PREVIOUS).
-  H      BaseActivity / BasePlayerActivity dispatchKeyEvent propagates
+  H/H'   BaseActivity / BasePlayerActivity dispatchKeyEvent propagates
          unhandled media keys past the foreground activity, with a
          framework-synthetic-repeat filter.
 
@@ -113,8 +123,6 @@ STOCK_APK_MD5S = {
 #   - Inline _dbgKV value traces at the diagnostic-critical sites
 #     (onTrackEdge id compare, flushLocked summary, onSeek decision,
 #     setPlayStatus, onPlayValue).
-#   - y1-trampoline-state byte dump before/after each wake (DbgPostReadRunnable
-#     posts +50 ms) — pre/post diff reveals whether T5/T9 emitted CHANGED.
 #
 # Toggle via env KOENSAYR_DEBUG=1 (apply.bash --debug sets it). Release
 # builds are byte-identical: no helpers, no log calls.
@@ -1713,6 +1721,8 @@ PATCH_B5_INJECT_FILES = [
         "smali/com/koensayr/y1/playback/PlaybackStateBridge.smali"),
     ("com/koensayr/y1/playback/PositionTicker.smali",
         "smali/com/koensayr/y1/playback/PositionTicker.smali"),
+    ("com/koensayr/y1/playback/PscPulse.smali",
+        "smali/com/koensayr/y1/playback/PscPulse.smali"),
     ("com/koensayr/y1/battery/BatteryReceiver.smali",
         "smali/com/koensayr/y1/battery/BatteryReceiver.smali"),
     ("com/koensayr/y1/papp/PappSetFileObserver.smali",
@@ -1720,17 +1730,6 @@ PATCH_B5_INJECT_FILES = [
     ("com/koensayr/y1/ui/NowPlayingRefresher.smali",
         "smali/com/koensayr/y1/ui/NowPlayingRefresher.smali"),
 ]
-
-# DEBUG-only Runnable for post-broadcast trampoline-state reads. Only included
-# when KOENSAYR_DEBUG=1; release builds get no reference to this class anywhere
-# (the calling _dbgPostReadAfter helper + the post-sendBroadcast invoke-static
-# anchors are both gated on the same flag).
-PATCH_B5_INJECT_FILES_DEBUG_ONLY = [
-    ("com/koensayr/y1/trackinfo/DbgPostReadRunnable.smali",
-        "smali/com/koensayr/y1/trackinfo/DbgPostReadRunnable.smali"),
-]
-if DEBUG_LOGGING:
-    PATCH_B5_INJECT_FILES = PATCH_B5_INJECT_FILES + PATCH_B5_INJECT_FILES_DEBUG_ONLY
 
 # --- DEBUG instrumentation for the inject tree (gated on KOENSAYR_DEBUG=1) ---
 # Two layers:
@@ -1787,152 +1786,6 @@ DBG_HELPERS_SMALI = """\
     return-void
 .end method
 
-# _dbgLogTrampolineState(String tag) → Log.d("Y1Patch", tag+" tramp.state[0..19]=HH HH …")
-#
-# Dumps 20 B of y1-trampoline-state. Layout (authoritative source:
-# _trampolines.py T9_OFF_STATE):
-#   [0..7]   last-synced track_id (T5 mirror)
-#   [8]      pad
-#   [9..12]  last_play_status / battery / repeat / shuffle (T9 edge memo)
-#   [13..19] per-event subscription gates
-#       13=sub_pos 14=sub_play 15=sub_papp 16=sub_track 17=sub_reached_end
-#       18=sub_reached_start 19=sub_battery
-#   ([20] sub_now_playing_content only present if file is 21 B; not dumped)
-#
-# Called immediately before each wakeTrackChanged / wakePlayStateChanged
-# sendBroadcast() and once per PositionTicker tick. pre/post diff reveals
-# whether T5 / T9 emitted CHANGED on the wire.
-#   * Does the [0..12] mirror match the current y1-track-info (audio_id /
-#     position / play_status)? Mismatch means T5/T9 hasn't published the
-#     latest state to the wire yet — i.e., the icon-doesn't-update symptom.
-.method public static _dbgLogTrampolineState(Ljava/lang/String;)V
-    .locals 8
-
-    :try_start_ts
-    sget-object v0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->INSTANCE:Lcom/koensayr/y1/trackinfo/TrackInfoWriter;
-
-    iget-object v0, v0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mFilesDir:Ljava/io/File;
-
-    if-nez v0, :cond_have_dir
-
-    return-void
-
-    :cond_have_dir
-    new-instance v1, Ljava/io/File;
-
-    const-string v2, "y1-trampoline-state"
-
-    invoke-direct {v1, v0, v2}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
-
-    new-instance v2, Ljava/io/FileInputStream;
-
-    invoke-direct {v2, v1}, Ljava/io/FileInputStream;-><init>(Ljava/io/File;)V
-
-    const/16 v3, 0x14
-
-    new-array v3, v3, [B
-
-    invoke-virtual {v2, v3}, Ljava/io/FileInputStream;->read([B)I
-
-    move-result v4
-
-    invoke-virtual {v2}, Ljava/io/FileInputStream;->close()V
-
-    const/16 v5, 0x14
-
-    if-lt v4, v5, :cond_short_read
-
-    new-instance v5, Ljava/lang/StringBuilder;
-
-    invoke-direct {v5}, Ljava/lang/StringBuilder;-><init>()V
-
-    invoke-virtual {v5, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-    const-string v6, " tramp.state[0..19]="
-
-    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-    const/16 v4, 0x0
-
-    :goto_loop
-    const/16 v6, 0x14
-
-    if-ge v4, v6, :cond_loop_done
-
-    aget-byte v6, v3, v4
-
-    and-int/lit16 v6, v6, 0xff
-
-    invoke-static {v6}, Ljava/lang/Integer;->toHexString(I)Ljava/lang/String;
-
-    move-result-object v6
-
-    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-    const-string v6, " "
-
-    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-    add-int/lit8 v4, v4, 0x1
-
-    goto :goto_loop
-
-    :cond_loop_done
-    invoke-virtual {v5}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-
-    move-result-object v5
-
-    const-string v6, "Y1Patch"
-
-    invoke-static {v6, v5}, Landroid/util/Log;->d(Ljava/lang/String;Ljava/lang/String;)I
-
-    :cond_short_read
-    :try_end_ts
-    .catch Ljava/lang/Throwable; {:try_start_ts .. :try_end_ts} :catch_ts
-
-    return-void
-
-    :catch_ts
-    move-exception v0
-
-    return-void
-.end method
-
-# _dbgPostReadAfter(String tag, long delayMs) → schedule a delayed
-# trampoline-state dump on the main looper. Allocates a fresh Handler +
-# DbgPostReadRunnable per call (debug-only path, allocation cost
-# irrelevant). The Runnable logs "{tag}.post tramp.state[0..19]=…" so a
-# tag like "wTC" produces "wTC.pre" (pre-broadcast, immediate) + "wTC.post"
-# (post-broadcast, ~50 ms later) — together they reveal whether T5/T9
-# emitted CHANGED on the wire (the relevant §6.7.1 gate byte cleared
-# between pre and post) or got gated out (byte stayed armed).
-.method public static _dbgPostReadAfter(Ljava/lang/String;J)V
-    .locals 5
-
-    :try_start_pa
-    new-instance v0, Landroid/os/Handler;
-
-    invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
-
-    move-result-object v1
-
-    invoke-direct {v0, v1}, Landroid/os/Handler;-><init>(Landroid/os/Looper;)V
-
-    new-instance v1, Lcom/koensayr/y1/trackinfo/DbgPostReadRunnable;
-
-    invoke-direct {v1, p0}, Lcom/koensayr/y1/trackinfo/DbgPostReadRunnable;-><init>(Ljava/lang/String;)V
-
-    invoke-virtual {v0, v1, p1, p2}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
-    :try_end_pa
-    .catch Ljava/lang/Throwable; {:try_start_pa .. :try_end_pa} :catch_pa
-
-    return-void
-
-    :catch_pa
-    move-exception v0
-
-    return-void
-.end method
 """
 
 PATCH_B5_DEBUG_ENTRY_TRACES = {
@@ -1965,6 +1818,10 @@ PATCH_B5_DEBUG_ENTRY_TRACES = {
         (r'start\(\)V',                         "PositionTicker.start"),
         (r'stop\(\)V',                          "PositionTicker.stop"),
         (r'run\(\)V',                           "PositionTicker.run (1s tick)"),
+    ],
+    "com/koensayr/y1/playback/PscPulse.smali": [
+        (r'fire\(\)V',                          "PscPulse.fire (phase 1)"),
+        (r'run\(\)V',                           "PscPulse.run (phase 2 +50ms)"),
     ],
     "com/koensayr/y1/battery/BatteryReceiver.smali": [
         (r'register\(Landroid/content/Context;\)V',
@@ -2021,30 +1878,37 @@ DBG_VALUE_PATCHES_TRACKINFOWRITER = [
         "    # === END DEBUG ===\n",
         "onTrackEdge.newAudioId",
     ),
-    # onTrackEdge: log when the EDGE branch fires (audio_ids differed →
-    # we'll reset mPositionAtStateChange to 0 + stamp mLastFreshTrackChangeAt).
+    # onTrackEdge: log when the reset branch fires. Two triggers funnel here:
+    #   1. audio_id changed (real track edge)
+    #   2. mPreviousTrackNaturalEnd was set (EOS-replay-same-track — see
+    #      docs/INVESTIGATION.md)
+    # Inject AFTER :cond_force_reset so both paths emit the log.
     (
         "    if-eqz v4, :cond_same_track\n"
         "\n"
-        "    # Real track edge — reset position anchor and re-flush.\n",
+        "    :cond_force_reset\n"
+        "    # Reset position anchor and re-flush.\n",
         "    if-eqz v4, :cond_same_track\n"
         "\n"
+        "    :cond_force_reset\n"
         "    # === DEBUG: edge detected ===\n"
         "    const-string v4, \"onTE.EDGE_DETECTED\"\n"
         "    invoke-static {v4}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->_dbg(Ljava/lang/String;)V\n"
         "    # === END DEBUG ===\n"
         "\n"
-        "    # Real track edge — reset position anchor and re-flush.\n",
+        "    # Reset position anchor and re-flush.\n",
         "onTrackEdge.EDGE",
     ),
-    # flushLocked: 4-line summary just before the FileOutputStream write —
+    # flushLocked: 4-line summary just before the RandomAccessFile write —
     # captures exactly what got written to y1-track-info this flush
     # (audio_id, mPositionAtStateChange, mLastKnownDuration, mPlayStatus).
+    # The flush uses RandomAccessFile in-place double-buffer writes so
+    # libextavrcp_jni.so's trampolines can mmap the same inode for
+    # race-free reads.
     (
         "    invoke-static {v1, v0, v2, v7}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->putUtf8Padded([BIILjava/lang/String;)V\n"
         "\n"
-        "    # Atomic write to filesDir/y1-track-info.tmp -> rename to y1-track-info\n"
-        "    new-instance v0, Ljava/io/File;\n",
+        "    # RandomAccessFile-based double-buffer in-place write to y1-track-info.\n",
         "    invoke-static {v1, v0, v2, v7}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->putUtf8Padded([BIILjava/lang/String;)V\n"
         "\n"
         "    # === DEBUG: log final flush state ===\n"
@@ -2063,8 +1927,7 @@ DBG_VALUE_PATCHES_TRACKINFOWRITER = [
         "    invoke-static {v0, v2, v3}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->_dbgKV(Ljava/lang/String;J)V\n"
         "    # === END DEBUG ===\n"
         "\n"
-        "    # Atomic write to filesDir/y1-track-info.tmp -> rename to y1-track-info\n"
-        "    new-instance v0, Ljava/io/File;\n",
+        "    # RandomAccessFile-based double-buffer in-place write to y1-track-info.\n",
         "flushLocked.summary",
     ),
     # onSeek entry: log input position (pre-suppression check).
@@ -2157,119 +2020,25 @@ DBG_VALUE_PATCHES_TRACKINFOWRITER = [
         "    iget-byte v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mPlayStatus:B\n",
         "setPlayStatus.entry",
     ),
-    # wakeTrackChanged pre-broadcast: dump trampoline-state[13..19] so we can
-    # see the §6.7.1 gates (especially state[13]=TRACK_CHANGED) at the moment
-    # we kick T5. If it stays armed across two consecutive wakes, T5 didn't
-    # emit between them (gated out, no re-RegisterNotification from CT yet).
-    (
-        ".method public wakeTrackChanged()V\n"
-        "    .locals 5\n"
-        "\n"
-        "    :try_start_0\n"
-        "    iget-object v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mContext:Landroid/content/Context;\n",
-        ".method public wakeTrackChanged()V\n"
-        "    .locals 5\n"
-        "\n"
-        "    :try_start_0\n"
-        "    # === DEBUG: log trampoline-state pre-broadcast ===\n"
-        "    const-string v0, \"wTC.pre\"\n"
-        "    invoke-static {v0}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->_dbgLogTrampolineState(Ljava/lang/String;)V\n"
-        "    # === END DEBUG ===\n"
-        "    iget-object v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mContext:Landroid/content/Context;\n",
-        "wakeTrackChanged.preBroadcast",
-    ),
-    # wakePlayStateChanged pre-broadcast: same diagnostic for state[14]
-    # (PLAYBACK_STATUS) / state[15] (POS) / state[16] (BATT) / state[17]
-    # (PAPP) — the four T9-emitted gates. Critical for diagnosing the
-    # play/pause icon non-update issue: if state[14] stays non-zero across
-    # successive wakes, T9 isn't emitting PLAYBACK_STATUS_CHANGED on the
-    # wire (likely because gate cleared from a prior wake, CT hasn't
-    # re-RegisterNotification'd yet).
-    (
-        ".method public wakePlayStateChanged()V\n"
-        "    .locals 5\n"
-        "\n"
-        "    :try_start_0\n"
-        "    iget-object v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mContext:Landroid/content/Context;\n",
-        ".method public wakePlayStateChanged()V\n"
-        "    .locals 5\n"
-        "\n"
-        "    :try_start_0\n"
-        "    # === DEBUG: log trampoline-state pre-broadcast ===\n"
-        "    const-string v0, \"wPSC.pre\"\n"
-        "    invoke-static {v0}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->_dbgLogTrampolineState(Ljava/lang/String;)V\n"
-        "    # === END DEBUG ===\n"
-        "    iget-object v0, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mContext:Landroid/content/Context;\n",
-        "wakePlayStateChanged.preBroadcast",
-    ),
-    # wakeTrackChanged post-broadcast: schedule a ~50 ms delayed
-    # trampoline-state read so we can compare pre vs post and answer
-    # definitively whether T5 emitted TRACK_CHANGED CHANGED on the wire
-    # (state[13] cleared between pre and post) or got gated out (byte
-    # stayed armed). Anchored on the "album" putExtra line that's unique
-    # to wakeTrackChanged.
-    (
-        "    const-string v2, \"album\"\n"
-        "\n"
-        "    iget-object v3, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mCachedAlbum:Ljava/lang/String;\n"
-        "\n"
-        "    invoke-virtual {v1, v2, v3}, Landroid/content/Intent;->putExtra(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\n"
-        "\n"
-        "    invoke-virtual {v0, v1}, Landroid/content/Context;->sendBroadcast(Landroid/content/Intent;)V\n"
-        "\n"
-        "    :cond_no_ctx\n",
-        "    const-string v2, \"album\"\n"
-        "\n"
-        "    iget-object v3, p0, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->mCachedAlbum:Ljava/lang/String;\n"
-        "\n"
-        "    invoke-virtual {v1, v2, v3}, Landroid/content/Intent;->putExtra(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\n"
-        "\n"
-        "    invoke-virtual {v0, v1}, Landroid/content/Context;->sendBroadcast(Landroid/content/Intent;)V\n"
-        "\n"
-        "    # === DEBUG: schedule post-broadcast trampoline-state read ===\n"
-        "    const-string v2, \"wTC\"\n"
-        "    const-wide/16 v3, 0x32\n"
-        "    invoke-static {v2, v3, v4}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->_dbgPostReadAfter(Ljava/lang/String;J)V\n"
-        "    # === END DEBUG ===\n"
-        "\n"
-        "    :cond_no_ctx\n",
-        "wakeTrackChanged.postBroadcast",
-    ),
-    # wakePlayStateChanged post-broadcast: same diagnostic. Anchored on
-    # the "playing" boolean branch unique to wakePlayStateChanged.
-    (
-        "    :cond_playing\n"
-        "    invoke-virtual {v1, v2, v4}, Landroid/content/Intent;->putExtra(Ljava/lang/String;Z)Landroid/content/Intent;\n"
-        "\n"
-        "    invoke-virtual {v0, v1}, Landroid/content/Context;->sendBroadcast(Landroid/content/Intent;)V\n"
-        "\n"
-        "    :cond_no_ctx\n",
-        "    :cond_playing\n"
-        "    invoke-virtual {v1, v2, v4}, Landroid/content/Intent;->putExtra(Ljava/lang/String;Z)Landroid/content/Intent;\n"
-        "\n"
-        "    invoke-virtual {v0, v1}, Landroid/content/Context;->sendBroadcast(Landroid/content/Intent;)V\n"
-        "\n"
-        "    # === DEBUG: schedule post-broadcast trampoline-state read ===\n"
-        "    const-string v2, \"wPSC\"\n"
-        "    const-wide/16 v3, 0x32\n"
-        "    invoke-static {v2, v3, v4}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->_dbgPostReadAfter(Ljava/lang/String;J)V\n"
-        "    # === END DEBUG ===\n"
-        "\n"
-        "    :cond_no_ctx\n",
-        "wakePlayStateChanged.postBroadcast",
-    ),
 ]
 
 DBG_VALUE_PATCHES_PLAYBACKSTATEBRIDGE = [
-    # onPlayValue entry: log raw newValue + reason ints (pre-mapping).
+    # onPlayValue entry: log raw newValue + reason ints. Injected immediately
+    # after :try_start_b5 — runs before the reason==1 init-seed suppression so
+    # suppressed events are still visible in logcat (an "oPV.reason=1" line with
+    # no matching wakePlayStateChanged = suppression fired). .locals 8 because
+    # the host method uses v3..v7 for the track-change blip-suppression cmp-long
+    # check. Our debug prelude clobbers v0..v2 only, which the host method
+    # re-initialises with const/4 v0, 0x1 right after.
     (
         ".method public static onPlayValue(II)V\n"
-        "    .locals 3\n"
+        "    .locals 8\n"
         "\n"
         "    :try_start_b5\n"
-        "    const/4 v0, -0x1\n",
+        "\n"
+        "    # MusicPlayerActivity.initView()",
         ".method public static onPlayValue(II)V\n"
-        "    .locals 3\n"
+        "    .locals 8\n"
         "\n"
         "    :try_start_b5\n"
         "    # === DEBUG: log new play-value + reason ===\n"
@@ -2280,7 +2049,8 @@ DBG_VALUE_PATCHES_PLAYBACKSTATEBRIDGE = [
         "    const-string v2, \"oPV.reason\"\n"
         "    invoke-static {v2, v0, v1}, Lcom/koensayr/y1/trackinfo/TrackInfoWriter;->_dbgKV(Ljava/lang/String;J)V\n"
         "    # === END DEBUG ===\n"
-        "    const/4 v0, -0x1\n",
+        "\n"
+        "    # MusicPlayerActivity.initView()",
         "onPlayValue.entry",
     ),
 ]
@@ -2440,6 +2210,49 @@ for lname, callback in PATCH_B5_LAMBDA_HOOKS:
 with open(ps_path, 'w') as f:
     f.write(ps_src)
 print(f"  Patch B5.2: PlayerService 6 listener lambdas → PlaybackStateBridge")
+
+# -- Patch B5.2t: track-change-blip suppression markers -----------------------
+# Hook restartPlay(Z) / autoSwitch() / nextSong() / prevSong() entries to call
+# PlaybackStateBridge.markTrackChange(). Each prepend sets the suppression
+# deadline 1s into the future; PlaybackStateBridge.onPlayValue then skips the
+# transient PLAYBACK_STATUS_CHANGED wake during the pause→play handshake
+# inside restartPlay. Stock playback semantics are preserved — the wake is
+# only suppressed for newValue=3 (PAUSED); newValue=1 (PLAYING) and the
+# downstream wakeTrackChanged / PositionTicker calls remain synchronous.
+PATCH_B5_2T_HOOKS = [
+    # (method_signature, locals_count, label)
+    # Anchors on the .method header + .locals N + blank line only — tolerates
+    # the optional `_inject_log_d` debug-trace block that may already sit
+    # between .locals and the first body line in --debug builds. The
+    # markTrackChange call uses no caller-visible v-registers, so locals N
+    # remains correct in both release and debug builds.
+    (".method public final restartPlay(Z)V",       4, "restartPlay(Z)"),
+    (".method private final autoSwitch()V",        7, "autoSwitch()"),
+    (".method public final nextSong()V",           6, "nextSong()"),
+    (".method public final prevSong()V",           6, "prevSong()"),
+]
+
+PATCH_B5_2T_INVOKE = "invoke-static {}, Lcom/koensayr/y1/playback/PlaybackStateBridge;->markTrackChange()V"
+
+for sig, locals_n, label in PATCH_B5_2T_HOOKS:
+    old_head = f"{sig}\n    .locals {locals_n}\n\n"
+    new_head = (
+        f"{sig}\n"
+        f"    .locals {locals_n}\n"
+        f"\n"
+        f"    {PATCH_B5_2T_INVOKE}\n"
+        f"\n"
+    )
+    if new_head in ps_src:
+        # idempotent re-run; already patched
+        continue
+    if old_head not in ps_src:
+        sys.exit(f"ERROR: Patch B5.2t anchor not found for {label} in PlayerService.smali")
+    ps_src = ps_src.replace(old_head, new_head, 1)
+
+with open(ps_path, 'w') as f:
+    f.write(ps_src)
+print(f"  Patch B5.2t: PlayerService restartPlay/autoSwitch/nextSong/prevSong → markTrackChange")
 
 # -- Patch B5.2a: hook PlayerService.setCurrentPosition (seek edge) -----------
 # The music app doesn't register OnSeekCompleteListener on either engine, so
@@ -2855,7 +2668,7 @@ print(f"  Patch B5.5: MusicPlayerActivity onResume/onPause + refreshRepeatShuffl
 # hosts the Binder MtkBt actually resolves to.
 #
 # The smali is kept in tree so MtkBt.odex component-bind work (see
-# docs/INVESTIGATION.md Trace #23) doesn't have to recreate it from scratch.
+# docs/INVESTIGATION.md for the RE) doesn't have to recreate it from scratch.
 
 PATCH_B6_INJECT_FILES = [
     ("com/koensayr/y1/avrcp/AvrcpBridgeService.smali",
@@ -2889,6 +2702,7 @@ PATCHED_SMALI_FILES = [
     "smali/com/koensayr/y1/trackinfo/TrackInfoWriter.smali",
     "smali/com/koensayr/y1/playback/PlaybackStateBridge.smali",
     "smali/com/koensayr/y1/playback/PositionTicker.smali",
+    "smali/com/koensayr/y1/playback/PscPulse.smali",
     "smali/com/koensayr/y1/battery/BatteryReceiver.smali",
     "smali/com/koensayr/y1/papp/PappSetFileObserver.smali",
     "smali/com/koensayr/y1/ui/NowPlayingRefresher.smali",

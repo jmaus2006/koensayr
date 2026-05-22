@@ -67,7 +67,7 @@ Anchored against **ICS Table 7 (Target Features)** in `docs/spec/AVRCP 1.3/AVRCP
 | 16-17 | PApp Setting Attribute / Value Text (0x15-0x16) | §5.2.5-5.2.6 | O | ✓ T_papp (UTF-8 "Repeat" / "Shuffle" / "Off") | — |
 | 18 | InformDisplayableCharacterSet (PDU 0x17) | §5.2.7 | O | ✓ T_charset (NOT_IMPLEMENTED reject; spec-permissible for Optional PDU) | — |
 | 19 | InformBatteryStatusOfCT (PDU 0x18) | §5.2.8 | O | ✓ T_battery | — |
-| **20** | GetElementAttributes (PDU 0x20) | §5.3.1 | **M (C.3: M IF cat 1)** | ✓ T4 (all 7 §5.3.4 attrs: Title / Artist / Album / TrackNumber / TotalNumberOfTracks / Genre / PlayingTime, single packed frame) | — |
+| **20** | GetElementAttributes (PDU 0x20) | §5.3.1 | **M (C.3: M IF cat 1)** | ✓ T4 (all 7 Appendix E attrs: Title / Artist / Album / TrackNumber / TotalNumberOfTracks / Genre / PlayingTime, single packed frame) | — |
 | **21** | GetPlayStatus (PDU 0x30) | §5.4.1 | **M (C.2: M IF GetElementAttributes Response)** | ✓ T6 with live position via `clock_gettime(CLOCK_BOOTTIME)` | — |
 | **22** | RegisterNotification (PDU 0x31) | §5.4.2 | **M (C.12: M IF cat 1)** | ✓ T2 / extended_T2 / T8 | — |
 | **23** | Notify EVENT_PLAYBACK_STATUS_CHANGED | §5.4.2 Tbl 5.29 | **M (C.4: M IF GetElementAttributes + RegisterNotification)** | ✓ T8 INTERIM + T9 CHANGED on edge | — |
@@ -108,18 +108,20 @@ Anchored against **ICS Table 7 (Target Features)** in `docs/spec/AVRCP 1.3/AVRCP
 
 The advertised set in the GetCapabilities response (T1's `EventsSupported` array) determines what a CT can register for. We advertise eight events: `{0x01, 0x02, 0x05, 0x08, 0x09, 0x0a, 0x0b, 0x0c}`. Events 0x03, 0x04, 0x06, 0x07 are not advertised; T8 / T5 / T9 still handle them if a permissive CT subscribes anyway.
 
-**§6.7.1 strict gate semantics:** T2 / T8 INTERIM arms `y1-trampoline-state[N]` = 1; T5 / T9 read the gate, emit CHANGED, then clear the gate (= 0). CT must re-`RegisterNotification` to re-arm and receive the next CHANGED. Wire-side cadence becomes `min(TG_tick_rate, CT_re-register_rate)`. M1 widens the cmp constant in mtkbt's RegNotif response dispatch (`fcn.0x121d8` at `0x12230`) from 1 to `0x0F`, so the dispatcher routes the JNI's reasonCode byte (IPC offset 8 = `ctxt[8]`) to the matching wire ctype: INTERIM (`0x0F`) for first-response arms, CHANGED (`0x0D`) for edge emits.
+**Subscription gating + §5.4.2 CHANGED cadence:** every inbound `RegisterNotification` CMD writes `g_avrcp_req_event_database[event_id] = seq_id + 1` (vaddr `0xd2b5`, `.bss`, 15 bytes — one byte per event_id). A nonzero byte means "subscribed in this session" *and* "this is the inbound AVCTP TID to echo on the matching CHANGED." T5 / T9 read the table at every CHANGED emit site and skip when the byte is zero. The table is zeroed by `clear_event_database` on every T1 GetCapabilities so a fresh CT-connection cannot inherit stale subscriptions from a previous CT. Within a session, CHANGED emits are continuous — the gate is not cleared after emit — letting Y1's per-edge / per-tick wire cadence match the music app's broadcast rate rather than each CT's individual re-`RegisterNotification` cadence. M1 widens the cmp constant in mtkbt's RegNotif response dispatch (`fcn.0x121d8` at `0x12230`) from 1 to `0x0F`, so the dispatcher routes the JNI's reasonCode byte (IPC offset 8 = `ctxt[8]`) to the matching wire ctype: INTERIM (`0x0F`) for first-response arms, CHANGED (`0x0D`) for edge emits.
+
+**AVRCP 1.3 §4.2.1 strict TID echo on non-RegNotif PDUs:** every response Y1 emits must echo the inbound CMD's AVCTP transaction label. For RegNotif INTERIM/CHANGED the database mechanism above supplies the TID. For non-RegNotif responses (GetEA / GetPlayStatus / Charset / Battery / PApp / Continuation), T4's prologue writes `conn[+0x11] = sp[+0x171]` (the inbound CMD's seq_id at the empirically-verified pre-`SUB SP` stack offset). All response builders read `conn[+0x11]` and pack it into the outbound AVCTP TL via the wire-emit chain `conn[+0x11] → msg[5] → packet[+0xa] → chan+0x39 → wire byte 0`. The same chain serves GetCapabilities responses via stock JNI's pre-R1 path, which writes `conn[+0x11]` before our hijack takes effect.
 
 | event_id | Name | Spec § | INTERIM | CHANGED on edge |
 |---|---|---|---|---|
-| 0x01 | PLAYBACK_STATUS_CHANGED | §5.4.2 Tbl 5.29 | ✓ T8 (arms state[14]) | ✓ T9 on play/pause edge (gated on state[14]; cleared after emit) |
-| 0x02 | TRACK_CHANGED | §5.4.2 Tbl 5.30 | ✓ extended_T2 (arms state[16]) | ✓ T5 on track edge (gated on state[16]; cleared after emit) |
-| 0x05 | PLAYBACK_POS_CHANGED | §5.4.2 Tbl 5.33 | ✓ T8 (arms state[13]) | ✓ T9 at ~1Hz while playing + T5 on track edge (gated on state[13]; T9's tick clears after emit so CT re-register sets the wire rate; T5's track-edge burst leaves the gate intact, T9's next 1 s tick re-evaluates) |
-| 0x08 | PLAYER_APPLICATION_SETTING_CHANGED | §5.4.2 Tbl 5.37 | ✓ T8 (arms state[15]; reads `y1-track-info[795..796]`) | ✓ T9 on Repeat/Shuffle edge (gated on state[15]; cleared after emit) |
-| 0x09 | NOW_PLAYING_CONTENT_CHANGED | AVRCP 1.4 §6.9.5 | ✓ T8 (arms state[20]; zero/empty payload) | ✓ T5 on track edge + T9 on play/pause edge (gated on state[20]; not cleared — piggybacks on the track + play edge bursts) |
-| 0x0a | AVAILABLE_PLAYERS_CHANGED | AVRCP 1.4 §6.9.4 | ✓ T8 (zero/empty payload) | n/a (Y1 has one player) |
-| 0x0b | ADDRESSED_PLAYER_CHANGED | AVRCP 1.4 §6.9.2 | ✓ T8 (PlayerID=0, UidCtr=0) | n/a (Y1 has one player) |
-| 0x0c | UIDS_CHANGED | AVRCP 1.4 §6.10.3.3 | ✓ T8 (UidCtr=0) | n/a (Y1 has no UID database) |
+| 0x01 | PLAYBACK_STATUS_CHANGED | §5.4.2 Tbl 5.29 | ✓ T8 | ✓ T9 on play/pause edge (gated on `database[1] != 0`) |
+| 0x02 | TRACK_CHANGED | §5.4.2 Tbl 5.30 | ✓ extended_T2 | ✓ T5 on track edge (gated on `database[2] != 0`) |
+| 0x05 | PLAYBACK_POS_CHANGED | §5.4.2 Tbl 5.33 | ✓ T8 | ✓ T9 at ~1Hz while playing + T5 on track edge (gated on `database[5] != 0`) |
+| 0x08 | PLAYER_APPLICATION_SETTING_CHANGED | §5.4.2 Tbl 5.37 | ✓ T8 (reads `y1-track-info[795..796]`) | ✓ T9 on Repeat/Shuffle edge (gated on `database[8] != 0`) |
+| 0x09 | NOW_PLAYING_CONTENT_CHANGED | 1.4+ event ID | ✓ T8 (zero/empty payload) | ✓ T5 on track edge + T9 on play/pause edge (gated on `database[9] != 0`) |
+| 0x0a | AVAILABLE_PLAYERS_CHANGED | 1.4+ event ID | ✓ T8 (zero/empty payload) | n/a (Y1 has one player) |
+| 0x0b | ADDRESSED_PLAYER_CHANGED | 1.4+ event ID | ✓ T8 (PlayerID=0, UidCtr=0) | n/a (Y1 has one player) |
+| 0x0c | UIDS_CHANGED | 1.4+ event ID | ✓ T8 (UidCtr=0) | n/a (Y1 has no UID database) |
 
 ---
 
@@ -165,13 +167,27 @@ Full PLT inventory (from `libextavrcp_jni.so` md5 `fd2ce74db9389980b55bccf3d8f15
 
 ### Code-cave budget
 
-LOAD #1 padding currently used: `0xac54..0xb448` (2036 B). Free space past `0xb448` to LOAD #2 at `0xbc08`: **~1984 bytes** (4020 B padding total).
+LOAD #1 padding budget: 4020 bytes total (`0xac54..0xbc08`). The patcher computes the assembled trampoline blob size at build time and prints it on every run; release builds currently land in the low 3 kB range, debug builds (`KOENSAYR_DEBUG=1`) ~150 B larger from the spliced `__android_log_print` calls. The patcher asserts on overflow before it can corrupt LOAD #2's `.data` / `.got`.
 
 If we ever do exhaust LOAD #1 padding, the fallback is to extend the same trick to the LOAD #2 padding region by bumping LOAD #2's `p_filesz`/`p_memsz`.
 
 ---
 
 ## 4. y1-track-info schema (cumulative)
+
+File-level wrapper:
+
+| File offset | Size | Contents |
+|---|---|---|
+| 0 | 1 B | `active_slot` — single-byte indicator (0 or 1). Reader's atomic load → dispatch. Writer's atomic store after slot fill flips this. |
+| 1..3 | 3 B | RFA padding (4-B align slot[0]). |
+| 4..1107 | 1104 B | **slot[0]** — 1104-byte schema below (in-place when `active_slot == 0` on read, fresh write target when `active_slot == 1`). |
+| 1108..2211 | 1104 B | **slot[1]** — second copy. |
+| 2212 | 1 B | RFA padding. |
+
+Total file: **2213 B**. Reader (`libextavrcp_jni.so` trampolines via `get_or_init_mmap` + `read_track_info`) memory-maps the file once per process, reads `file[0]` per emit to pick the slot, byte-copies the 1104-byte payload (or any sub-range via `slot_offset`) into the trampoline's stack `file_buf`. Writer (`TrackInfoWriter.flushLocked`) writes the inactive slot via `RandomAccessFile.seek+write`, then atomically flips `file[0]` to point at the just-written slot — readers never observe a torn slot.
+
+Per-slot schema (offsets relative to the active slot's start):
 
 | Offset | Field | Size | Status | Source |
 |---|---|---|---|---|
@@ -186,19 +202,19 @@ If we ever do exhaust LOAD #1 padding, the fallback is to extend the same trick 
 | 792 | playing_flag | 1 | shipped | `TrackInfoWriter.mPlayStatus` (3-valued AVRCP §5.4.1 Tbl 5.26 enum: 0=STOPPED, 1=PLAYING, 2=PAUSED — set by `PlaybackStateBridge.onPlayValue` hooking `Static.setPlayValue` newValue 0/1/3/5) |
 | 793 | previous_track_natural_end | 1 | shipped | `TrackInfoWriter.mPreviousTrackNaturalEnd` (T5 gate for AVRCP §5.4.2 Tbl 5.31 TRACK_REACHED_END CHANGED) |
 | 794 | battery_status | 1 | shipped | `TrackInfoWriter.mBatteryStatus` (T8 INTERIM + T9 CHANGED-on-edge for AVRCP §5.4.2 Tbl 5.34 BATT_STATUS_CHANGED) |
-| 795 | repeat_avrcp | 1 | shipped | `TrackInfoWriter.mRepeatAvrcp` (AVRCP §5.2.4 Tbl 5.20 enum; written by `PappSetFileObserver` on `y1-papp-set` writes; T8 0x08 INTERIM + T9 papp CHANGED-on-edge read this byte) |
-| 796 | shuffle_avrcp | 1 | shipped | `TrackInfoWriter.mShuffleAvrcp` (AVRCP §5.2.4 Tbl 5.21 enum; same write/read pipeline as 795) |
+| 795 | repeat_avrcp | 1 | shipped | `TrackInfoWriter.mRepeatAvrcp` (AVRCP 1.3 Appendix F attribute 0x02 enum; written by `PappSetFileObserver` on `y1-papp-set` writes; T8 0x08 INTERIM + T9 papp CHANGED-on-edge read this byte) |
+| 796 | shuffle_avrcp | 1 | shipped | `TrackInfoWriter.mShuffleAvrcp` (AVRCP 1.3 Appendix F attribute 0x03 enum; same write/read pipeline as 795) |
 | 797..799 | reserved | 3 | — | available for future PApp attribute additions (Equalizer / Scan if a Y1 release ever surfaces them) |
 | 800..815 | TrackNumber (UTF-8 ASCII decimal) | 16 | shipped | `MediaStore.Audio.Media.TRACK % 1000` / parsed from `METADATA_KEY_CD_TRACK_NUMBER` |
 | 816..831 | TotalNumberOfTracks (UTF-8 ASCII decimal) | 16 | shipped | `count(*) WHERE ALBUM_ID=?` / parsed from `CD_TRACK_NUMBER` "n/total" |
 | 832..847 | PlayingTime (UTF-8 ASCII decimal ms) | 16 | shipped | derived from `duration_ms` |
 | 848..1103 | Genre (UTF-8) | 256 | shipped | `MediaStore.Audio.Genres` / `METADATA_KEY_GENRE` |
 
-Total file size: **1104 B**. Page-aligned write is still single-block. Schema bumps are append-only; we never relocate existing fields, so older trampolines keep working against a newer file (T6 / T8 / T9 only read up to offset 792 and are unaffected by attrs 4-7 being appended past 800).
+Total slot size: **1104 B**. Per-slot schema is append-only; we never relocate existing fields. The file-level wrapper (1 B `active_slot` + 3 B pad + 2 × 1104 B slots + 1 B pad = 2213 B) keeps reader / writer race-free without `tmpfile + rename`.
 
-The numeric AVRCP §5.3.4 attrs (4 / 5 / 7) are stored pre-formatted as ASCII decimal strings rather than binary u16 / u32 with a Thumb-2 itoa, keeping the T4 trampoline a uniform strlen+memcpy loop.
+The numeric AVRCP 1.3 Appendix E attrs (4 / 5 / 7) are stored pre-formatted as ASCII decimal strings rather than binary u16 / u32 with a Thumb-2 itoa, keeping the T4 trampoline a uniform strlen+memcpy loop.
 
-`y1-trampoline-state` (16 B, mode 0666) is the BT-process-writable surface used by T5 / T9 for cross-firing edge state: bytes 0..7 = last_seen track_id (T5), byte 8 = last RegisterNotification transId (T5), byte 9 = last_play_status (T9), byte 10 = last_battery_status (T9), byte 11 = last_repeat_avrcp (T9 papp edge), byte 12 = last_shuffle_avrcp (T9 papp edge), bytes 13..15 = padding.
+Trampoline edge state lives in `libextavrcp_jni.so` `.bss` at `G_Y1_TRAMPOLINE_STATE_VADDR = 0xd2d6` (13 B): bytes 0..7 = last_seen track_id (T5 / T4 edge detect), byte 8 = unused (was last RegNotif transId; per-event TIDs now live in `g_avrcp_req_event_database`), byte 9 = last_play_status (T9), byte 10 = last_battery_status (T9), byte 11 = last_repeat_avrcp (T9 papp), byte 12 = last_shuffle_avrcp (T9 papp). Zero-init at process load (same scope as `g_avrcp_req_event_database`).
 
 ---
 
@@ -259,7 +275,7 @@ The btlog parser (`tools/btlog-parse.py`) gives us full HCI command/event visibi
 |---|---|---|
 | New PDU response builder has an arg convention not derivable from disassembly alone | Medium | Bisect via JNI in-tree caller (most builders are called by stock JNI somewhere even if Java stack never reaches them). Failing that, ship a no-op trampoline that returns NOT_IMPLEMENTED and watch CT behavior to confirm the CT was actually probing for that PDU. |
 | The 1 s PLAYBACK_POS_CHANGED cadence creates wakeup pressure | Low | T9's position-emit block runs only when file[792]==PLAYING and is driven by a 1 s `Handler.postDelayed` loop that's cancelled the moment playback pauses or stops. No timer fires while idle. Strict CTs subscribed for a longer interval are over-served (spec-permissible — `shall be emitted at this interval` defines a max-interval ceiling, not a min cadence floor). |
-| LOAD #1 extension exhausts page-padding | Very low | ~1284 B free past the current 2736 B blob; budget supports many more trampolines. Fallback: extend LOAD #2 padding. |
+| LOAD #1 extension exhausts page-padding | Very low | 4020-byte cap is hard-asserted in the patcher; build fails before it can corrupt LOAD #2's GOT. Fallback: extend LOAD #2 padding. |
 | Trampoline blob shifts every PLT call beyond range | Low (Thumb b.w covers ±16 MB; trampolines and PLT are <0x10000 apart) | Verify `bl.w`/`b.w` reach in `_thumb2asm.py` self-test for each new emit site. |
 | AVRCP version negotiation: F1 patch sets MtkBt-internal version flag but our wire-shape PDU set is 1.3 | Low | F1 only flips the BlueAngel-internal flag to unblock 1.3+ command dispatch through MtkBt's Java layer. SDP record advertises AVRCP 1.3 (V1 patch) / AVCTP 1.2 (V2 patch). Per AVRCP 1.3 §6 (Service Discovery Interoperability Requirements) + ESR07 §2.1 / Erratum 4969, the served version is what CTs key against, and they negotiate a 1.3 dialogue — which is what we implement. |
 | Continuation PDU 0x40/0x41 traffic from a CT (would require stateful re-emit) | Low — TG never fragments | T_continuation emits NOT_IMPLEMENTED, which is spec-acceptable. If a CT ever issues 0x40, upgrade to a stateful re-emitter. |
@@ -285,13 +301,13 @@ AVRCP 1.3 sits on top of AVCTP, which rides L2CAP. A2DP rides AVDTP, signalled b
 
 **Current state.** `T_continuation` rejects 0x40 / 0x41 with AV/C NOT_IMPLEMENTED via the UNKNOW_INDICATION fallback. Counted as ✓ in §2 because the OEM `_send_get_element_attributes_rsp` packs into a 644 B buffer and emits a single non-fragmented frame — TG never sets `packet_type=01`, so a spec-conforming CT never sends 0x40.
 
-**Why deferred.** A stateful re-emitter is only meaningful after the OEM `_send_get_element_attributes_rsp` is replaced by a manual META builder that fragments at AVRCP layer (i.e., the TG actually sets `packet_type=01`). Until that bypass lands, the re-emitter is dead code. Cheaper INVALID_PARAMETER (status 0x05 per §6.15.2) reject hits a binary-shape barrier: `libextavrcp.so` exposes no META REJECTED builder, and changing the existing `cmd_frame_ind_rsp` arg shape carries regression risk for every unhandled-PDU path with no observable wire-shape benefit (CT can't tell the two reject codes apart).
+**Why deferred.** A stateful re-emitter is only meaningful after the OEM `_send_get_element_attributes_rsp` is replaced by a manual META builder that fragments at AVRCP layer (i.e., the TG actually sets `packet_type=01`). Until that bypass lands, the re-emitter is dead code. Cheaper INVALID_PARAMETER (status 0x05 per AVRCP 1.3 §5.7.1 Table 5.41) reject hits a binary-shape barrier: `libextavrcp.so` exposes no META REJECTED builder, and changing the existing `cmd_frame_ind_rsp` arg shape carries regression risk for every unhandled-PDU path with no observable wire-shape benefit (CT can't tell the two reject codes apart).
 
 **Plan when revisited.** Replace T4's `_send_get_element_attributes_rsp` call with a manual META builder that paginates at AVRCP layer (set `packet_type=01` on first fragment, cache the rest in a per-conn state struct in the trampoline blob region). Upgrade T_continuation: on 0x40 emit next chunk with `packet_type=02/03`; on 0x41 drop state. ~3 days; needs `AVRCP_SendMessage` (libextavrcp.so:0x18ec) IPC shape disassembly.
 
 ### 9.2 AVRCP playback state ↔ AVDTP source state coupling — *A2DP / AVDTP* — SHIPPED
 
-**Spec.** AVDTP 1.3 §8.13 / §8.15: when AVRCP TG signals PAUSED, the A2DP source should keep the stream paused (NOT torn down); resume without renegotiation on PLAYING. SUSPEND is reserved for explicit policy changes (phone call routing, etc.), not for normal pause / silence handling.
+**Spec.** AVDTP 1.3 §8.14 / §8.15: when AVRCP TG signals PAUSED, the A2DP source should keep the stream paused (NOT torn down); resume without renegotiation on PLAYING. SUSPEND is reserved for explicit policy changes (phone call routing, etc.), not for normal pause / silence handling.
 
 **Stock deviation.** AudioFlinger's silence-timeout (~3 s after the music app stops writing samples) hits `libaudio.a2dp.default.so::A2dpAudioStreamOut::standby_l`, which calls `a2dp_stop` unconditionally → AVDTP SUSPEND on the wire. Peer CTs that aggressively close + reopen their A2DP sink on SUSPEND cycle once per pause-of-≥3 s, producing burst-on-resume audio and playhead drift.
 
@@ -303,11 +319,11 @@ AVRCP 1.3 sits on top of AVCTP, which rides L2CAP. A2DP rides AVDTP, signalled b
 
 ### 9.3 Per-attribute 511-byte hard cap in `…send_get_element_attributes_rsp` — *AVRCP* — SHIPPED
 
-**Spec.** AVRCP 1.3 §5.3.4 places no per-attribute byte cap. TG fragments via §5.5 if the total response exceeds AVCTP MTU.
+**Spec.** AVRCP 1.3 §5.3.1 Table 5.24 places no per-attribute byte cap. TG fragments via §5.5 if the total response exceeds AVCTP MTU.
 
 **OEM TG deviation.** `libextavrcp.so:0x2188` (`btmtk_avrcp_send_get_element_attributes_rsp`) enforces a 511-byte per-attribute hard cap; on overflow it emits `[BT][AVRCP][ERR] too large attr_index:%d` and drops the attribute silently.
 
-**Current state.** The music app's `TrackInfoWriter.putUtf8Padded` caps each string attribute at 240 bytes before it lands in `y1-track-info`. The cap is well below the OEM 511 hard cap so even after multi-byte UTF-8 expansion at the CT side the attribute survives. Truncation is codepoint-safe — if the chosen byte position would split a multi-byte codepoint, the helper walks back to the codepoint boundary so a strict CT never sees a malformed UTF-8 sequence (AVRCP 1.3 §5.3.4 CharacterSet=0x6A). Numeric attributes (TrackNumber 4, TotalNumber 5, PlayingTime 7) are bounded to a 15-byte ASCII slot and unaffected.
+**Current state.** The music app's `TrackInfoWriter.putUtf8Padded` caps each string attribute at 240 bytes before it lands in `y1-track-info`. The cap is well below the OEM 511 hard cap so even after multi-byte UTF-8 expansion at the CT side the attribute survives. Truncation is codepoint-safe — if the chosen byte position would split a multi-byte codepoint, the helper walks back to the codepoint boundary so a strict CT never sees a malformed UTF-8 sequence (AVRCP 1.3 §5.3.1 Table 5.24 CharacterSet=0x6A). Numeric attributes (TrackNumber 4, TotalNumber 5, PlayingTime 7) are bounded to a 15-byte ASCII slot and unaffected.
 
 **Optional follow-up.** Bypass `…send_get_element_attributes_rsp` entirely and build the GetElementAttributes response wire frame directly in the trampoline, using the full §5.5 fragmentation flow from §9.1 above. Removes the 511 cap as a constraint. ~3 days if paired with §9.1 (no value as a standalone change — 240 B already fits everything we'd realistically ship).
 
@@ -406,7 +422,7 @@ GAVDP layer rejects non-SBC SEPs at `GavdpAvdtpEventCallback` per ARCHITECTURE.m
 
 A2DP §3.1: peers consult advertised AVDTP version before GAVDP_ConnectionEstablishment. Per §9.12 AVDTP-1.3 features are Optional at the AVDTP layer; per §9.13 GAVDP 1.3 raises GET_ALL_CAPABILITIES to Mandatory at the Acceptor layer.
 
-Shipped: V3 + V4 + V5. V3/V4 bump A2DP/AVDTP advertisement to 1.3. V5 is a 2-byte TBH jump-table alias routing sig 0x0c through the sig 0x02 GET_CAPABILITIES handler — per AVDTP V13 §8.8, the sig 0x02 response is a wire-compatible subset of the sig 0x0c response, sufficient for an SBC-only Source.
+Shipped: V3 + V4 + V5. V3/V4 bump A2DP/AVDTP advertisement to 1.3. V5 is a 2-byte TBH jump-table alias routing sig 0x0c through the sig 0x02 GET_CAPABILITIES handler — per AVDTP 1.3 §8.8, the sig 0x02 response is a wire-compatible subset of the sig 0x0c response, sufficient for an SBC-only Source.
 
 ### 9.12 AVDTP 1.3 ICS audit — *AVDTP* — VERIFIED, GAP = ADVERTISED VERSION
 
@@ -442,7 +458,7 @@ Table 16 (Message Error Handling): Reporting Capability Error (M) ✓ via `[AVDT
 
 The AVDTP signal dispatcher at file `0xaa72c` (full disassembly in `INVESTIGATION.md`) has a TBH jump table at `0xaa81e` with explicit entries for both sig 0x0c (target `0xab4de`) and sig 0x0d (target `0xab540`). Sig 0x0d DELAYREPORT has substantive handler logic. Sig 0x0c GET_ALL_CAPABILITIES is a stub at `0xab4de` that always falls through to the BAD_LENGTH error path — peer receives an error response, not a General Reject.
 
-V5 patches the jump-table entry for sig 0x0c to redirect to the sig 0x02 GET_CAPABILITIES handler at `0xaa924`. This is a structural workaround, not a real handler — but per AVDTP V13 §8.8 the sig 0x02 response is a wire-compatible subset of the sig 0x0c response, which suffices for an SBC-only Source.
+V5 patches the jump-table entry for sig 0x0c to redirect to the sig 0x02 GET_CAPABILITIES handler at `0xaa924`. This is a structural workaround, not a real handler — but per AVDTP 1.3 §8.8 the sig 0x02 response is a wire-compatible subset of the sig 0x0c response, which suffices for an SBC-only Source.
 
 **Compliance verdict.**
 
@@ -508,7 +524,7 @@ Combining §9.10 (AVCTP) + §9.11 (A2DP) + §9.12 (AVDTP) + §9.13 (GAVDP):
 | AVDTP | 1.0 | 1.3 (paired with A2DP 1.3) | none at AVDTP layer; sig 0x0c is Optional here | V4 (0xeba09 0x00→0x03) | ✓ shipped |
 | GAVDP | not separately advertised; piggybacks AVDTP version | 1.3 (transitive) | Table 5 row 9 (sig 0x0c GET_ALL_CAPABILITIES response, Mandatory at GAVDP-Acceptor) | V5 (TBH jump-table alias at 0xaa834) | ✓ shipped |
 
-**Status: Option C shipped — V3 + V4 + V5 landed together.** V3 + V4 bump A2DP/AVDTP advertisement to 1.3; V5 is the structural workaround for sig 0x0c — it aliases the dispatcher's TBH jump-table entry from the BAD_LENGTH stub at `0xab4de` to the existing GET_CAPABILITIES handler at `0xaa924`. Per AVDTP V13 §8.8 the sig 0x02 response is a wire-compatible **subset** of the sig 0x0c response (no extended Service Capabilities), which is exactly what our SBC-only Source advertises anyway.
+**Status: Option C shipped — V3 + V4 + V5 landed together.** V3 + V4 bump A2DP/AVDTP advertisement to 1.3; V5 is the structural workaround for sig 0x0c — it aliases the dispatcher's TBH jump-table entry from the BAD_LENGTH stub at `0xab4de` to the existing GET_CAPABILITIES handler at `0xaa924`. Per AVDTP 1.3 §8.8 the sig 0x02 response is a wire-compatible **subset** of the sig 0x0c response (no extended Service Capabilities), which is exactly what our SBC-only Source advertises anyway.
 
 **V5 is wire-correct by decoupling.** The AVDTP wire-frame TX site is `fcn.000ae418` (calls `L2CAP_SendData` at file offset `0xae58e`). Byte 1 of the response frame (sig_id) is read at `0xae480` from `txn->[0xe]`, where `txn = *(channel + 0x10)` is the per-channel transaction state populated by the request parser at signal-RX time. The dispatcher (TBH at `0xaa81e`) and per-signal handlers (e.g. `0xaa924`) do not write `txn->[0xe]`. When a peer issues sig 0x0c the parser stores 0x0c in `txn->[0xe]`, V5 routes dispatch through the GET_CAPABILITIES handler, the handler updates state, and `fcn.000ae418` reads `txn->[0xe]=0x0c` and emits a response with `sig_id=0x0c`. Full walk-through in `INVESTIGATION.md`.
 

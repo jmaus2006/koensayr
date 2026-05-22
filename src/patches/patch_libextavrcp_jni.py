@@ -15,7 +15,7 @@ _thumb2asm.py. Per-trampoline behaviour: docs/PATCHES.md. Stack frame
 and JNI calling convention: docs/ARCHITECTURE.md.
 
 Pairs with patch_mtkbt.py's P1 (msg 519 size=9 routing) and
-patch_libextavrcp.py's E1 (§5.3.4 zero-length emit).
+patch_libextavrcp.py's E1 (§5.3.1 Table 5.24 zero-length emit).
 """
 
 import argparse
@@ -41,36 +41,34 @@ NATIVE_TRACK_CHANGED_VADDR = 0x3bc0
 NATIVE_PLAY_STATUS_CHANGED_VADDR = 0x3c88
 
 STOCK_MD5         = "fd2ce74db9389980b55bccf3d8f15660"
-OUTPUT_MD5        = "d803f42c973bf9539f4d03ccb658cab3"
+OUTPUT_MD5        = "4ebd181976c1dbdd19b6a06112dce484"
 
-# --debug: splices __android_log_print calls into T5/T6/T8/T9 emit sites
-# (tag "Y1T"). Release builds remain byte-identical without the env var.
+# KOENSAYR_DEBUG=1: splices __android_log_print calls (tag "Y1T") into the
+# inbound CMD dispatcher (T1pdu / T2reg markers) and T9's outbound emit
+# sites (T9ps / T9papp / T9pos). Release builds remain byte-identical
+# without the env var.
 DEBUG_LOGGING     = os.environ.get("KOENSAYR_DEBUG", "") == "1"
-OUTPUT_DEBUG_MD5  = "05c990d850ec180eb10bafba47b6b553"
+OUTPUT_DEBUG_MD5  = "384f0c630feff36d43e62a122764bade"
 EXPECTED_OUTPUT_MD5 = OUTPUT_DEBUG_MD5 if DEBUG_LOGGING else OUTPUT_MD5
 
 # ---------------------------------------------------------------- T1
 
-# T1 — GetCapabilities trampoline at 0x7308 (overwrites testparmnum, 40 of
-# 48 bytes). Advertised set: 0x01 PLAYBACK_STATUS, 0x02 TRACK_CHANGED,
-# 0x05 PLAYBACK_POS, 0x08 PLAYER_APPLICATION_SETTING_CHANGED, plus 1.4
-# IDs 0x09..0x0c (T8 INTERIM-only, no CHANGED). Strict CTs gate their
-# metadata-pane render on the 1.4 IDs being acked even from a 1.3 TG.
-T1_TRAMPOLINE = bytes([
-    0x9D, 0xF8, 0x7E, 0x01,                  # ldrb.w r0, [sp, #382]
-    0x10, 0x28,                               # cmp r0, #0x10
-    0x0D, 0xD1,                               # bne.n 0x732c (bridge to T2)
-    0x04, 0xA3,                               # adr r3, 0x7324
-    0x05, 0xF1, 0x08, 0x00,                  # add.w r0, r5, #8
-    0x00, 0x21,                               # movs r1, #0
-    0x08, 0x22,                               # movs r2, #8   (events count = 8)
-    0xFC, 0xF7, 0x60, 0xE9,                  # blx 0x35dc (PLT: get_capabilities_rsp)
-    0xFF, 0xF7, 0x04, 0xBF,                  # b.w 0x712a (epilogue)
-    0x00, 0xBF,                               # nop
-    0x01, 0x02, 0x05, 0x08, 0x09, 0x0a, 0x0b, 0x0c,  # advertised events
-    0xFF, 0xF7, 0xD2, 0xBF,                  # b.w 0x72d4 (T2 stub)
-])
-assert len(T1_TRAMPOLINE) == 40
+# T1 stub at 0x7308 overlays the unused `testparmnum` JNI debug method
+# (40 bytes available). The stub is a 4-byte `b.w T1_extended` bridge —
+# T1's GetCapabilities body lives in the trampoline blob (see
+# `_emit_t1_extended` in `_trampolines.py`). Hosting the body in the
+# blob gives T1's GetCapabilities path room to bl clear_event_database
+# (resets the per-event subscription database on every fresh CT
+# connection so ghost-arm subscriptions can't leak across CT
+# disconnect/reconnect). The remaining 36 bytes of the testparmnum
+# slot are zero-padded (never executed).
+def _t1_bridge(t1_extended_vaddr: int) -> bytes:
+    a = Asm(0x7308)
+    a.labels["target"] = t1_extended_vaddr
+    a.b_w("target")
+    while len(a.buf) < 40:
+        a.buf.append(0x00)
+    return a.resolve()
 
 # Stock testparmnum first 40 bytes.
 TESTPARMNUM_STOCK = bytes([
@@ -119,6 +117,18 @@ LOAD1_FILESZ_OFFSET = LOAD1_PHDR_OFFSET + 16
 LOAD1_MEMSZ_OFFSET  = LOAD1_PHDR_OFFSET + 20
 LOAD1_OLD_SIZE = 0xac54
 
+# Hard ceiling for the trampoline blob. The stock ELF lays LOAD #2's
+# file offset at 0xbc08 (its first byte is `.data` / `.got` and the
+# dynamic linker reads it via mmap). Anything past 0xbc08 in the file
+# silently clobbers LOAD #2's first bytes — GOT corruption produces a
+# SIGSEGV during/after the next PLT call (typically classInitNative).
+# The patcher's MD5 pin catches stable changes but a fresh debug build
+# with new log sites would *match its own pinned MD5* even while
+# silently corrupting LOAD #2; the assertion below makes that case
+# fail loudly.
+LOAD2_FILE_OFFSET = 0xbc08
+TRAMPOLINE_BUDGET = LOAD2_FILE_OFFSET - LOAD1_OLD_SIZE   # 0xbc08 - 0xac54 = 4020
+
 # ---------------------------------------------------------------- patch list builder
 
 
@@ -161,9 +171,20 @@ def build_patches() -> tuple[list[dict], int]:
     """Build the patch list. Returns (patches, new_load1_size)."""
     blob, addrs = build_trampolines(debug=DEBUG_LOGGING)
     extended_t2_vaddr = addrs["extended_T2"]
+    t1_extended_vaddr = addrs["T1_extended"]
     t5_vaddr = addrs["T5"]
     t9_vaddr = addrs["T9"]
     new_load1_size = T4_VADDR + len(blob)
+
+    if len(blob) > TRAMPOLINE_BUDGET:
+        raise AssertionError(
+            f"trampoline blob ({len(blob)} bytes) exceeds the LOAD #1 padding "
+            f"budget ({TRAMPOLINE_BUDGET} bytes). Anything past file offset "
+            f"0x{LOAD2_FILE_OFFSET:x} overwrites LOAD #2's .data/.got and the "
+            f"binary will SIGSEGV during classInitNative on load. Shrink the "
+            f"trampoline (drop debug log sites or consolidate format strings) "
+            f"before re-running. debug={DEBUG_LOGGING}"
+        )
 
     patches = [
         {
@@ -193,10 +214,13 @@ def build_patches() -> tuple[list[dict], int]:
             "after":  bytes([0x00, 0xBF, 0x00, 0xBF]),  # nop ; nop (Thumb-2)
         },
         {
-            "name": "T1: GetCapabilities trampoline (testparmnum) at 0x7308",
+            "name": (
+                f"T1: testparmnum → b.w T1_extended (0x{t1_extended_vaddr:x})"
+                f" bridge at 0x7308"
+            ),
             "offset": 0x7308,
             "before": TESTPARMNUM_STOCK,
-            "after":  T1_TRAMPOLINE,
+            "after":  _t1_bridge(t1_extended_vaddr),
         },
         {
             "name": (

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html). For full prose detail on any entry, see `git log`.
 
 ## [Unreleased]
+### Fixed
+- Broader head-unit coverage for live metadata. Continuous notifications across track, play-state, position, and repeat/shuffle edges; head units detect each new track even when titles repeat; clean subscription state on every fresh connection.
+- Metadata + play / pause indicators now work on the broad class of head units and speakers that strictly require their AVRCP transaction IDs be echoed back. Previously, those head units silently rejected every response Y1 sent and fell back to key-press-only mode — metadata panes stayed blank and play-state indicators drifted out of sync.
+- Head units that gate metadata on AVRCP browse capability now enter full metadata mode. Restored the public-browse-group SDP attribute that some head units use as a "this peer supports full AVRCP" discriminator.
+- Metadata no longer freezes on head units that close the audio stream between tracks. The AVRCP control channel now survives audio open/close cycles, so the metadata view stays in sync without re-handshaking after every skip.
+- Head-unit play / pause glyphs flip reliably after a head-unit-initiated PAUSE. The music-player Activity was seeding a PLAYING announcement immediately after its own startup-reset PAUSE, racing out to the AVRCP wire as PAUSED → PLAYING; head units saw the trailing PLAYING and refused to flip.
+- Discrete PAUSE on head units with separate Play and Pause buttons pauses idempotently instead of toggling.
+- Spurious paused-state blips during track changes no longer interrupt head-unit playback indicators.
+
+### Changed
+- Lower-latency metadata responses under sustained head-unit polling. Track-info exchange between the music app and the Bluetooth stack now uses shared memory (single-digit-ms reads vs ~25 ms before) with no torn reads at track edges.
+
+### Added
+- `apply.bash --debug` build emits per-emit wire-side markers (`Y1T :` logcat tag) for diagnosing head-unit-specific AVRCP issues. Pair `tools/avrcp-wire-trace.py` with `tools/btlog-parse.py --avrcp` on a simultaneously-captured `btlog.bin` for the matching mtkbt-internal view.
 
 ## [2.3.0] - 2026-05-16
 ### Added
@@ -12,7 +26,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [2.2.0] - 2026-05-16
 ### Changed
-- AVRCP 1.3 §6.7.1 strict subscription gating in the trampoline chain — one CHANGED per CT registration; CT re-registers to receive the next. Matches Pixel-as-TG observed cadence on spec-compliant Controllers.
+- AVRCP 1.3 §5.4.2 strict subscription gating in the trampoline chain — one CHANGED per CT registration; CT re-registers to receive the next. Matches reference-TG observed cadence on spec-compliant Controllers.
 - `mtkbt` outbound-frame drop bypass — every T9 / T5 CHANGED emit reaches the wire under sustained traffic (stock dropped silently under A2DP saturation).
 - TRACK_CHANGED `Identifier` carries the per-track audio ID so strict 1.4+ Controllers invalidate their `GetElementAttributes` cache on every track edge instead of serving stale metadata.
 - Faster perceived metadata refresh — TRACK_CHANGED pre-emits at `setDataSource` and at `playerPrepared` tail (was: `OnPreparedListener`, ~100-500 ms later). PLAYBACK_STATUS_CHANGED fresh-track edge fires ~260 ms earlier.
@@ -41,7 +55,7 @@ AVRCP 1.3 metadata + control pipeline over Bluetooth. A peer Controller now sees
 - Bidirectional Repeat / Shuffle. CT and Y1 UI stay in sync without navigating away and back.
 - Discrete PASSTHROUGH routing (PLAY / PAUSE / STOP / NEXT / PREVIOUS) for CTs that don't tolerate toggle behaviour, plus PLAY-while-playing → pause-toggle for non-spec CTs.
 - A2DP stream survives pauses — AudioFlinger silence-timeout no longer tears down the AVDTP source.
-- Per-subscription notification gating (AVRCP §6.7.1) — one INTERIM + one CHANGED per registration, matching spec-compliant TG semantics.
+- Per-subscription notification gating (AVRCP 1.3 §5.4.2) — one INTERIM + one CHANGED per registration, matching spec-compliant TG semantics.
 - `Y1Bridge` Android service satisfies MtkBt's `bindService(MediaPlaybackService)` and answers synchronous queries from the music-app-owned state file.
 - Spec-compliant `GetElementAttributes` response shape — TG emits exactly the requested attribute IDs in the requested order; unsupported IDs emit with length 0.
 

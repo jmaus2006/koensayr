@@ -11,7 +11,7 @@ The socket exists in stock firmware; root is only needed because the mtkbt proce
 ## Files
 
 - **`btlog-dump.c`** — direct ARM-EABI syscall implementation, no libc. `socket(AF_UNIX, SOCK_STREAM)` → `connect()` to abstract `"btlog"` (sun_path[0]=NUL, then "btlog") → loop `read()` to stdout. Zero command-line args; runs until EOF or interrupt.
-- **`Makefile`** — cross-compile via `arm-linux-gnu-gcc`. Same `-nostdlib -ffreestanding -static -Os -mthumb -mfloat-abi=soft` flags as `src/su/`. Reuses `../su/start.S` as the entry stub.
+- **`Makefile`** — cross-compile via `arm-linux-gnu-gcc`. Same flags as `src/su/`: compile `-nostdlib -ffreestanding -fno-builtin -fno-stack-protector -Os -Wall -Wextra -std=gnu99 -march=armv7-a -mthumb -mfloat-abi=soft -fno-asynchronous-unwind-tables -fno-unwind-tables`; link `-nostdlib -static -Wl,--build-id=none -Wl,--gc-sections`. Reuses `../su/start.S` as the entry stub.
 
 ## Build
 
@@ -56,7 +56,7 @@ Decoded by `tools/btlog-parse.py`. Roughly:
 | 2 | Sequence ID (2 ASCII chars; alphabetical, increments per frame) |
 | 1 | Severity / category (`0x12` for xlog text, `0xb4` for HCI snoop) |
 | 1 | `0x00` pad |
-| body[0..1]   | Often constant `00 e5` |
+| body[0..2]   | Often constant `00 e5` |
 | body[2..6]   | Timestamp (`u32` LE; monotonic per process lifetime, **separate domains per severity**) |
 | body[6..10]  | Zero/flag bytes |
 | body[10..12] | `u16` LE — typically the format-string base length |
@@ -67,7 +67,7 @@ Severities seen: `0x12` (xlog text — `[AVRCP]`, `[AVCTP]`, `[L2CAP]`, `[ME]`, 
 ## Trade-offs
 
 - **No supply chain beyond GCC + this source.** Mirrors `src/su/`'s policy.
-- **`@btlog` is undocumented** — the framing was reverse-engineered by inspection (Trace #9 in `../../docs/INVESTIGATION.md` / the live brief). Future MTK firmware revisions could change it; if `tools/btlog-parse.py` produces empty output after a firmware bump, re-derive from the binary stream.
+- **`@btlog` is undocumented** — the framing was reverse-engineered by inspection (see `../../docs/INVESTIGATION.md`). Future MTK firmware revisions could change it; if `tools/btlog-parse.py` produces empty output after a firmware bump, re-derive from the binary stream.
 - **Sustained captures fill `/sdcard` fast.** ~80% of typical capture volume is per-byte HCI logging (`[BT]GetByte:`/`[BT]PutByte:`); filter post-hoc with `btlog-parse.py --tag-exclude '[BT] '` or take short captures around the specific scenario you're investigating.
 
 ## See also

@@ -10,7 +10,7 @@
 - **Bluetooth pairing** — audio.conf / auto_pairing.conf / blacklist.conf / build.prop edits for car and headset pairing.
 - **System config** — enable ADB debugging, remove preinstalled bloatware.
 - **Root** — install `/system/xbin/su` (setuid, mode 06755) for `adb shell /system/xbin/su` escalation. Stock `/sbin/adbd` stays untouched.
-- **AVRCP 1.3 metadata + control over Bluetooth** — peer Controller sees full track metadata, ms-precision playhead, track / battery notifications, and bidirectional Repeat / Shuffle. Spec-compliant 1.3 TG (§6.7.1 / §6.6.1 / §5.3.4).
+- **AVRCP 1.3 metadata + control over Bluetooth** — peer Controller sees full track metadata, ms-precision playhead, track / battery notifications, and bidirectional Repeat / Shuffle. Spec-compliant AVRCP 1.3 TG.
 - **Investigation tooling** — diagnostic scripts (`@btlog` tap, dual-capture, post-root probe, gdbserver attach). Not invoked by the patch flow — see [Diagnostics](#diagnostics).
 
 Compatibility is defined by [`KNOWN_FIRMWARES`](#stock-firmware-manifest) in `apply.bash`; add a row to enrol a new build.
@@ -21,7 +21,7 @@ The bash entry-point at the root dispatches into source trees under `src/`:
 
 - `apply.bash` — single entry point; flag-driven dispatch into the trees below
 - [`src/patches/`](src/patches/) — byte/smali patchers (`patch_*.py`); see [`src/patches/README.md`](src/patches/README.md) for the per-patcher table and [`docs/PATCHES.md`](docs/PATCHES.md) for byte-level detail
-- [`src/su/`](src/su/) — minimal setuid-root `su` for `--root` (~900-byte direct-syscall ARM-EABI ELF, no libc). Build via `cd src/su && make`
+- [`src/su/`](src/su/) — minimal setuid-root `su` for `--root` (~1-2 KB direct-syscall ARM-EABI ELF, no libc). Build via `cd src/su && make`
 - [`src/Y1Bridge/`](src/Y1Bridge/) — Android service app source for `Y1Bridge.apk` (consumed by `--avrcp`; hosts the Binder declaration MtkBt resolves to). Build via `cd src/Y1Bridge && ./gradlew --stop && ./gradlew assembleDebug`
 - [`src/btlog-dump/`](src/btlog-dump/) — `@btlog` abstract-socket reader (diagnostic; same toolchain as `src/su/`). Build via `cd src/btlog-dump && make`
 - `tools/` — setup, diagnostic, and release helpers
@@ -58,9 +58,9 @@ Override bundled tooling with `--mtkclient-dir <path>` / `--python-venv <path>` 
 | Flag | Effect |
 |---|---|
 | `--adb` | Append `persist.service.adb.enable=1` + `persist.service.debuggable=1` to `build.prop`. |
-| `--avrcp` | AVRCP 1.3 metadata pipeline: patches `mtkbt`, `libextavrcp.so`, `libextavrcp_jni.so`, `MtkBt.odex`, the music app, plus `Y1Bridge.apk` install. Pre-requires `gradlew assembleDebug` in `src/Y1Bridge/`. Patch ID legend in [`docs/PATCHES.md`](docs/PATCHES.md); architecture in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). |
+| `--avrcp` | AVRCP 1.3 metadata pipeline: patches `mtkbt`, `libextavrcp.so`, `libextavrcp_jni.so`, `MtkBt.odex`, `libaudio.a2dp.default.so`, `usr/keylayout/AVRCP.kl`, plus `Y1Bridge.apk` install. Pre-requires `gradlew assembleDebug` in `src/Y1Bridge/`. Patch ID legend in [`docs/PATCHES.md`](docs/PATCHES.md); architecture in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). |
 | `--bluetooth` | Pairing-essential `audio.conf` / `auto_pairing.conf` / `blacklist.conf` / `build.prop` edits. Required for car pairing. |
-| `--music-apk` | Patch Y1 music player APK (Artist→Album navigation). |
+| `--music-apk` | Patch Y1 music player APK (Artist→Album navigation; discrete PASSTHROUGH routing; media-key propagation; Y1Bridge smali injections). |
 | `--remove-apps` | Remove bloatware (`ApplicationGuide`, `BasicDreams`, …). |
 | `--root` | Install `src/su/build/su` at `/system/xbin/su` (mode 06755). Pre-requires `make` in `src/su/`. |
 | `--all` | All of the above. Pre-requires the `src/su/` + `src/Y1Bridge/` builds. |
@@ -85,10 +85,10 @@ Background on the failed alternatives these tools replace: [`docs/INVESTIGATION.
 
 Known stock firmwares recognised by `KNOWN_FIRMWARES` in the bash. Add a row (same five-field schema) to enrol a new build.
 
-| Version | rom.zip (input) | system.img (raw, extracted) | boot.img (in zip; not consumed since v1.7.0) | Music APK basename in `app/` |
+| Version | system.img (raw, extracted) | boot.img (in zip; not consumed since v1.7.0) | rom.zip (input) | Music APK basename in `app/` |
 |---|---|---|---|---|
-| **3.0.2** | `82657db82578a38c6f1877e02407127a` | `473991dadeb1a8c4d25902dee9ee362b` | `1f7920228a20c01ad274c61c94a8cf36` | `com.innioasis.y1_3.0.2.apk` |
-| **3.0.7** | `02ae3ae89e20bde0a20e940f73e1ed1b` | `663baf9f7f2a08caa82e3fba7a9baa28` | `83b946d1799b4f0281ba8e808ed7911b` | `com.innioasis.y1_3.0.7.apk` |
+| **3.0.2** | `473991dadeb1a8c4d25902dee9ee362b` | `1f7920228a20c01ad274c61c94a8cf36` | `82657db82578a38c6f1877e02407127a` | `com.innioasis.y1_3.0.2.apk` |
+| **3.0.7** | `663baf9f7f2a08caa82e3fba7a9baa28` | `83b946d1799b4f0281ba8e808ed7911b` | `02ae3ae89e20bde0a20e940f73e1ed1b` | `com.innioasis.y1_3.0.7.apk` |
 
 The MediaTek BT stack (`bin/mtkbt`, `lib/libextavrcp*.so`, `lib/libaudio.a2dp.default.so`, `app/MtkBt.odex`) is byte-identical between 3.0.2 and 3.0.7 — every native patch in `--avrcp` / `--bluetooth` applies unchanged. Only the music APK differs (resource-ID shifts + a few additions in `Y1Repository`), and `patch_y1_apk.py`'s smali anchors handle both builds.
 
